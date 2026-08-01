@@ -45,6 +45,10 @@ class BaseLIF(nn.Module):
         self.count_spikes: bool = False
         self.spike_total: torch.Tensor | float = 0.0  # kept on-device, never .item()ed here
         self.spike_slots: int = 0                    # neurons x timesteps x batch seen
+        # Shape of one sample's output, e.g. (12, 30, 30). Learned from the first
+        # counted step so layers.csv can report neurons per layer without the
+        # network having to describe itself.
+        self.spike_shape: tuple[int, ...] | None = None
 
     @abstractmethod
     def forward(self, x: torch.Tensor) -> torch.Tensor:
@@ -73,15 +77,31 @@ class BaseLIF(nn.Module):
         """
         if not self.count_spikes:
             return
+        if self.spike_shape is None:
+            self.spike_shape = tuple(spikes.shape[1:])  # drop the batch dimension
         self.spike_total = self.spike_total + spikes.detach().sum()
         self.spike_slots += spikes.numel()
 
     def reset_spike_stats(self) -> None:
         self.spike_total = 0.0
         self.spike_slots = 0
+        self.spike_shape = None
+
+    def neurons(self) -> int:
+        """Neurons in this layer, per sample. 0 until something has been counted."""
+        if self.spike_shape is None:
+            return 0
+        count = 1
+        for dimension in self.spike_shape:
+            count *= dimension
+        return count
 
     def spike_rate(self) -> float:
-        """Mean spikes per neuron per timestep. Reads the device tensor once."""
+        """Mean spikes per neuron per timestep, as a FRACTION (x100 for %).
+
+        Reads the accumulated device tensor exactly once -- doing it inside the
+        forward loop would force a host/device sync on every layer of every step.
+        """
         if self.spike_slots == 0:
             return 0.0
         total = self.spike_total

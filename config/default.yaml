@@ -237,6 +237,41 @@ training:
   loss: cross_entropy
 
 # ---------------------------------------------------------------------------
+# metrics: measurement settings. See docs/metrics_plan.md for the execution
+# order these produce, and docs/metrics_reference.md for what each number means.
+#
+# These must be IDENTICAL across frameworks, like batch_size -- they shape the
+# measurement, not the experiment.
+# ---------------------------------------------------------------------------
+metrics:
+  results_dir: results
+
+  # Forward+backward passes run before timing starts, to compile CUDA kernels
+  # and spin up the DataLoader workers. NO optimizer.step() is called, so the
+  # weights are untouched and the timed epochs start exactly where they would
+  # have without warm-up.
+  warmup_iterations: 5
+
+  # Seconds spent sampling GPU power with nothing running, to get the idle
+  # baseline. Measured once cold at the start and once immediately after
+  # training, when the GPU is idle but still at working temperature -- the
+  # honest baseline for the work just done. Both are recorded.
+  idle_seconds: 20
+
+  # Samples used for the batch_size=1 latency measurement (MLPerf Single-Stream).
+  # 100 is enough for a stable median and p90.
+  latency_samples: 100
+
+  # Test batches used for the dedicated spike-counting pass. Counting costs a
+  # GPU reduction per layer per timestep, so this pass is separate and UNTIMED.
+  spike_batches: 20
+
+  # Set false to skip NVML entirely. Energy is also skipped automatically when
+  # NVML or the power sensor is unavailable -- the columns are then written
+  # empty rather than the run failing.
+  measure_energy: true
+
+# ---------------------------------------------------------------------------
 # equivalence: settings for equivalence_check.py
 #
 # Builds ONE neuron per framework, feeds all three the identical input, and
