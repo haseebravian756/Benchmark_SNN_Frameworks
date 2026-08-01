@@ -134,35 +134,12 @@ def make_input(spec: dict[str, Any], steps: int) -> torch.Tensor:
 
 
 def run_snntorch(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
-    import snntorch as snn
-    from snntorch import surrogate as snn_surrogate
+    # Same builder the training adapter uses, so snnTorch's parameters are read
+    # in exactly one place and the two cannot drift apart.
+    from src.adapters.snntorch_lif import build_leaky
 
-    prefix = "snntorch"
-    surrogate_type = require_str(neuron_cfg, f"{prefix}.surrogate.type")
-    surrogate_alpha = require_float(neuron_cfg, f"{prefix}.surrogate.alpha")
-
-    builders = {
-        "atan": snn_surrogate.atan,
-        "sigmoid": snn_surrogate.sigmoid,
-        "fast_sigmoid": snn_surrogate.fast_sigmoid,
-    }
-    if surrogate_type not in builders:
-        raise ConfigError(
-            f"neuron.snntorch.surrogate.type '{surrogate_type}' is not supported. "
-            f"Supported: {sorted(builders)}"
-        )
-
-    shared = {
-        "beta": require_float(neuron_cfg, f"{prefix}.beta"),
-        "reset_mechanism": require_str(neuron_cfg, f"{prefix}.reset_mechanism"),
-        # reset_delay=False makes the reset take effect on the step the spike
-        # happens. snnTorch's default (True) defers it to the next step, which
-        # would put its membrane trace one step out of phase with the others.
-        "reset_delay": require_bool(neuron_cfg, f"{prefix}.reset_delay"),
-        "spike_grad": builders[surrogate_type](alpha=surrogate_alpha),
-    }
-    real = snn.Leaky(threshold=require_float(neuron_cfg, f"{prefix}.threshold"), **shared)
-    shadow = snn.Leaky(threshold=NEVER_FIRES_THRESHOLD, **shared)
+    real = build_leaky(neuron_cfg)
+    shadow = build_leaky(neuron_cfg, threshold=NEVER_FIRES_THRESHOLD)
 
     membrane = torch.zeros(1)
     v_pre, v_post, spikes = [], [], []

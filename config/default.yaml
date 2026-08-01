@@ -1,0 +1,230 @@
+# Configuration for the SNN framework comparison.
+#
+# Every experiment value lives here. Python code reads these; it contains no
+# experiment values of its own. To run a different experiment, edit this file
+# or pass --config other.yaml.
+#
+# The values below are YOURS to change. The comments explain what each one
+# means in its own framework so you can reason about them, but the code does
+# not derive, translate, or "fix" any of them -- what you write here is what
+# the neuron gets.
+
+# ---------------------------------------------------------------------------
+# dataset: event data loading. Nothing here is framework-specific -- all three
+# frameworks read byte-identical batches from the same cache, so data
+# preparation is never part of what is being compared.
+# ---------------------------------------------------------------------------
+dataset:
+  name: nmnist
+  root: data          # where the raw download is unpacked
+  cache_dir: cache    # base folder; a framing-specific subfolder is made inside
+
+  # N-MNIST-specific event options (Tonic's defaults are both false).
+  # They change the raw events, so they are part of the cache identity.
+  first_saccade_only: false   # true = keep only the first of the 3 saccades
+  stabilize: false            # true = undo the saccade motion
+
+  # Denoising: drop events that have no neighbouring event within 1 pixel and
+  # within this many microseconds. Event cameras emit a lot of isolated noise
+  # events, and removing them is standard practice -- the snnTorch/Tonic N-MNIST
+  # tutorial this architecture comes from uses exactly 10000.
+  #
+  # RECOMMENDED: 10000. Lower values filter more aggressively (fewer events
+  # survive). Set to null to disable denoising entirely.
+  # Runs before framing and changes which events exist, so it is part of the
+  # cache identity -- changing it builds a separate, reusable cache.
+  denoise_filter_time_us: 10000
+
+  # ToFrame ADDS UP every event landing in the same pixel, polarity and time
+  # bin, so frame values are event COUNTS, not spikes. Measured range on N-MNIST
+  # at T=20: 0 to 8. Setting this true clamps them to 0/1, making the network's
+  # input real spikes.
+  #
+  # NOTE FOR ANOTHER DEVELOPER: left false deliberately. Counts carry more
+  # information (a pixel that saw 8 events really was busier than one that saw
+  # 1), and Tonic-based examples normally feed counts. It applies identically to
+  # all three frameworks either way, so it cannot bias the comparison -- but it
+  # does change accuracy and spike-rate numbers, so record which you used.
+  # Applied after the cache read, so flipping it needs no cache rebuild.
+  binarize: false
+
+  framing:
+    # How a recording of events becomes a stack of frames. One frame = one
+    # timestep the network sees, so this decides T.
+    #
+    #   n_time_bins - split each recording into N equal time slices.
+    #                 Always exactly N frames, so batching is trivial.
+    #   time_window - one frame per fixed duration of real time. More
+    #                 physically meaningful, but recordings differ in length so
+    #                 the frame count varies -- `frames` below then pads short
+    #                 samples with empty frames and truncates long ones.
+    mode: n_time_bins
+
+    n_time_bins: 20       # used when mode = n_time_bins
+    time_window_us: 15000 # used when mode = time_window (microseconds)
+    frames: 20            # target frame count; required for time_window
+
+  batch_size: 128
+  # MUST be identical across frameworks: it changes wall-clock time, so a
+  # different value per framework invalidates the speed comparison. Free Colab
+  # typically has only ~2 CPU cores, so values above 2 usually add overhead
+  # without adding throughput. 0 means no worker process at all -- the main
+  # process loads data while the GPU waits.
+  num_workers: 2
+
+  shuffle_train: true
+  shuffle_test: false
+
+  # Tonic compresses cached samples by default: smaller on disk, more CPU per
+  # read. Colab has plenty of disk and few cores, so false is usually faster
+  # there. Applies equally to all three frameworks, so it cannot bias results.
+  cache_compress: false
+
+# ---------------------------------------------------------------------------
+# neuron: one block per framework.
+#
+# The same idealised neuron is described three times, because each framework
+# names and parameterises it differently. Reference target (doc section 3):
+#   threshold 1.0 | hard reset to 0 | per-step decay 0.9 | input gain 1.0
+# ---------------------------------------------------------------------------
+neuron:
+
+  snntorch:
+    # snnTorch update: mem = beta * mem + input
+    # `beta` IS the decay factor, so it is written directly.
+    beta: 0.9
+    threshold: 1.0
+
+    # VERIFIED against snntorch 1.0.0: the default is "subtract" (soft reset),
+    # which would NOT match the other two. "zero" = hard reset.
+    reset_mechanism: zero
+
+    # VERIFIED against snntorch 1.0.0, and NOT mentioned in the reference doc:
+    # snnTorch defaults to reset_delay=True, which applies a spike's reset on
+    # the FOLLOWING timestep. SpikingJelly and Norse both reset immediately.
+    # Left at the default, snnTorch's membrane reads 1.2 where the others read
+    # 0.0. false = reset immediately = matches the other two.
+    reset_delay: false
+
+    # Surrogate gradient. Affects the BACKWARD pass only -- the forward
+    # membrane/spike dynamics are identical regardless of this setting.
+    surrogate:
+      type: atan
+      alpha: 2.0
+
+  spikingjelly:
+    # SpikingJelly update (decay_input=False): v = v - v/tau + input
+    #                                            = (1 - 1/tau) * v + input
+    # So decay = 1 - 1/tau. For decay 0.9:  tau = 1 / (1 - 0.9) = 10.0
+    tau: 10.0
+
+    # VERIFIED against spikingjelly 0.0.0.0.14: the default is True, which
+    # divides the input by tau and changes the input gain to 1/tau = 0.1.
+    # false keeps input gain at 1.0.
+    decay_input: false
+
+    v_threshold: 1.0
+    v_reset: 0.0
+
+    # VERIFIED: SpikingJelly's default surrogate is Sigmoid(alpha=4.0), not ATan.
+    surrogate:
+      type: atan
+      alpha: 2.0
+
+  norse:
+    # Norse LIFBoxCell update, read from the installed source:
+    #   dv = dt * tau_mem_inv * (input + v_leak - v)
+    #   v  = v + dv = (1 - dt*tau_mem_inv) * v + (dt*tau_mem_inv) * input
+    #
+    # So decay = 1 - dt*tau_mem_inv, and the input gain is dt*tau_mem_inv --
+    # the two are locked together and cannot be set independently.
+    # For decay 0.9:  dt * tau_mem_inv = 0.1
+    dt: 0.001
+    tau_mem_inv: 100.0
+
+    v_th: 1.0
+    v_reset: 0.0
+    v_leak: 0.0
+
+    # Because decay and gain are locked (see above), choosing decay 0.9 forces
+    # input gain 0.1. The input is multiplied by this factor before it reaches
+    # the neuron, to bring the effective gain back to 1.0:  0.1 * 10.0 = 1.0
+    input_scale: 10.0
+
+    # Norse has no native ATan surrogate. SuperSpike with alpha 10 is the
+    # closest available (its own default is alpha=100). This is a documented
+    # framework limitation, not an error -- and it affects the backward pass
+    # only, so the equivalence check is unaffected.
+    surrogate:
+      type: super
+      alpha: 10.0
+
+# ---------------------------------------------------------------------------
+# equivalence: settings for equivalence_check.py
+#
+# Builds ONE neuron per framework, feeds all three the identical input, and
+# compares the membrane traces. No network, no dataset, no training.
+# ---------------------------------------------------------------------------
+equivalence:
+  # A single neuron is a few hundred numbers; a GPU would be pointless here.
+  device: cpu
+
+  # Number of timesteps to simulate.
+  steps: 100
+
+  # Which membrane trace the plot draws. Both are always compared for PASS/FAIL
+  # regardless of this setting -- this only changes the picture.
+  #
+  #   pre_reset  - the membrane after charging but BEFORE the reset. This is the
+  #                value that gets tested against the threshold, so you can see
+  #                it cross the line and then drop. Easier to read.
+  #   post_reset - the value carried into the next timestep, which is 0 for one
+  #                step after every spike. The threshold crossing is invisible
+  #                because it has already been reset away.
+  plot_membrane: pre_reset
+
+  # Input currents to test. Each one produces its own plot and its own verdict.
+  inputs:
+    # Doc section 6, Test A: silent for `onset` steps, then a constant current
+    # switched on and held.
+    #
+    # amplitude MUST stay below the threshold (1.0). The doc suggests 1.2, but
+    # with input gain 1.0 that fires on the very first step and every step
+    # after, so the membrane is flat at 0 and the test proves nothing -- three
+    # broken neurons would agree on a flat line too. At 0.15 the membrane
+    # climbs toward 0.15/(1-0.9) = 1.5, crosses the threshold after ~11 steps,
+    # resets, and climbs again: a regular sawtooth that genuinely tests the
+    # decay rate.
+    - name: constant_step
+      onset: 10
+      amplitude: 0.15
+
+    # Doc section 6, Test B: a fixed random spike train, which is far closer to
+    # how real event-camera data arrives. `rate` is the probability of an event
+    # at each timestep; `seed` makes it reproducible, so all three frameworks
+    # receive the byte-identical input.
+    #
+    # amplitude MUST stay below the threshold (1.0). At amplitude 1.0 a single
+    # event fires the neuron on its own, so it never integrates anything and
+    # the test measures nothing -- and it parks the membrane exactly ON the
+    # threshold, where the frameworks genuinely disagree (see the boundary
+    # probe printed at the top of every run). At 0.6 the neuron needs roughly
+    # two events close together, which actually exercises the decay.
+    - name: poisson
+      rate: 0.15
+      amplitude: 0.6
+      seed: 0
+
+  # PASS/FAIL thresholds (doc section 6, "Pass criteria").
+  tolerance:
+    # Largest allowed difference between any two membrane traces at any
+    # timestep. 1e-4 is loose enough for float32 noise, tight enough that a
+    # real mistranslation cannot slip through.
+    max_v_deviation: 1.0e-4
+
+    # Fraction of timesteps whose spike/no-spike decision must agree across
+    # all three. 1.0 = require a perfect match.
+    min_spike_time_match: 1.0
+
+  # Where the overlaid membrane-trace plot is written.
+  output_dir: results
