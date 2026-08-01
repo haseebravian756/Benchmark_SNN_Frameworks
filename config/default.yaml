@@ -216,7 +216,7 @@ neuron:
 training:
   device: cuda      # cuda | cpu. Override at the command line with --device.
   seed: 0           # fixes weight init AND batch order
-  epochs: 1         # the reference doc suggests 5; 1 is enough for a smoke test
+  epochs: 5         # the reference doc suggests 5; 1 is enough for a smoke test
 
   optimizer:
     # torch.optim name. nadam | adam | sgd
