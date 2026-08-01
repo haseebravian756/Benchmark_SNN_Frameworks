@@ -65,9 +65,15 @@ def data_info_without_download(dataset_cfg: dict) -> DataInfo:
 def weight_fingerprint(net: SpikingNet) -> str:
     """Short hash of every TRAINABLE weight, in a fixed order.
 
-    Two frameworks built with the same seed must produce the same string. If they
-    do not, they are not starting from the same place and no accuracy comparison
-    between them means anything.
+    What this check is for: the three FRAMEWORKS, same seed, SAME MACHINE, must
+    produce the same string. If they do not, they are not starting from the same
+    weights and no accuracy comparison between them means anything.
+
+    What it is NOT for: comparing machines. PyTorch does not promise identical
+    random numbers across torch versions, platforms or CPU/CUDA builds, so the
+    fingerprint legitimately differs between (say) a Windows CPU laptop and a
+    Colab T4. That does not matter here -- all runs of one experiment happen on
+    one machine. Record the value per machine.
 
     Trainable parameters only -- deliberately NOT state_dict(). Each framework
     registers its own non-trainable buffers on its neuron (snnTorch adds
@@ -154,20 +160,18 @@ def main() -> int:
 
     print()
     print(f"  weight fingerprint (seed {args.seed}): {weight_fingerprint(net)}")
-    print("  ^ must be IDENTICAL across frameworks for the same seed")
+    print("  ^ must match the OTHER FRAMEWORKS on THIS machine, same seed.")
+    print("    A different value on a different machine is expected and fine:")
+    print("    torch does not promise identical RNG across versions/platforms.")
 
     # Reset must genuinely clear state, or neurons leak between batches.
+    # Each adapter answers has_state() for itself, since every framework keeps
+    # its membrane somewhere different.
     with torch.no_grad():
         net(batch)
-    leftover = [
-        type(layer).__name__ for layer in net.lif_layers()
-        if getattr(layer, "membrane", None) is not None
-    ]
+    leftover = [type(layer).__name__ for layer in net.lif_layers() if layer.has_state()]
     net.reset()
-    still_set = [
-        type(layer).__name__ for layer in net.lif_layers()
-        if getattr(layer, "membrane", None) is not None
-    ]
+    still_set = [type(layer).__name__ for layer in net.lif_layers() if layer.has_state()]
     print()
     print(f"  state present after a forward pass: {leftover or 'none'}")
     print(f"  state present after reset():        {still_set or 'none'}  (should be none)")

@@ -54,6 +54,16 @@ class BaseLIF(nn.Module):
     def reset(self) -> None:
         """Drop all neuron state. Called at the start of every batch."""
 
+    def has_state(self) -> bool:
+        """Is any neuron state currently being held?
+
+        Not part of the computational contract -- this exists so that a reset
+        can be *verified* rather than assumed, which is what check_network.py
+        does. Each framework stores its state somewhere different, so each
+        adapter answers for itself.
+        """
+        return False
+
     def _record(self, spikes: torch.Tensor) -> None:
         """Accumulate spike statistics without stalling the GPU.
 

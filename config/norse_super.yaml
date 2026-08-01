@@ -1,0 +1,24 @@
+# Norse with SuperSpike -- the surrogate the reference doc originally specified.
+#
+# Purpose: a controlled comparison against the default config's circ(0.5), to
+# quantify how much the SURROGATE CHOICE ALONE moves accuracy, spike rate and
+# training dynamics. Everything else is inherited from default.yaml, so the two
+# runs differ in exactly one setting and cannot drift apart.
+#
+#   python train.py --config config/norse_super.yaml --framework norse
+#
+# Expect: gradients roughly 6x larger than the ATan-based frameworks, hence an
+# effectively larger learning rate at the same lr value. See
+# docs/norse_superspike_alpha_finding.md.
+#
+# NOTE: `alpha` below has NO EFFECT in norse 1.1.0 -- its SuperSpike backward
+# ignores it. It is written as 10.0 only to match what the reference doc asks
+# for; the behaviour is identical at any value.
+
+extends: default.yaml
+
+neuron:
+  norse:
+    surrogate:
+      type: super
+      alpha: 10.0

@@ -98,6 +98,9 @@ class SnnTorchLIF(BaseLIF):
         """
         self.membrane = None
 
+    def has_state(self) -> bool:
+        return self.membrane is not None
+
     def describe(self) -> dict[str, Any]:
         return {
             "class": "snntorch.Leaky",

@@ -18,18 +18,54 @@ class ConfigError(Exception):
     """Raised when the config is missing a value or has the wrong type."""
 
 
-def load_config(path: str | Path) -> dict[str, Any]:
-    """Read a YAML config file into a dict."""
+def _deep_merge(base: dict[str, Any], override: dict[str, Any]) -> dict[str, Any]:
+    """Recursively overlay `override` on `base`. Lists are replaced, not merged."""
+    merged = dict(base)
+    for key, value in override.items():
+        if isinstance(value, dict) and isinstance(merged.get(key), dict):
+            merged[key] = _deep_merge(merged[key], value)
+        else:
+            merged[key] = value
+    return merged
+
+
+def load_config(path: str | Path, _chain: tuple[Path, ...] = ()) -> dict[str, Any]:
+    """Read a YAML config file into a dict.
+
+    A config may start with `extends: other.yaml` (resolved relative to its own
+    directory) and then override only the keys it cares about. Everything else
+    is inherited.
+
+    This exists to stop config duplication. In a study whose whole claim is
+    "everything held equal", two near-identical config files are a real hazard:
+    change batch_size in one and forget the other, and the comparison is
+    silently invalid. With `extends`, shared values exist in exactly one place.
+    """
     path = Path(path)
     if not path.is_file():
         raise ConfigError(f"config file not found: {path.resolve()}")
+
+    resolved = path.resolve()
+    if resolved in _chain:
+        loop = " -> ".join(p.name for p in (*_chain, resolved))
+        raise ConfigError(f"circular 'extends' in config files: {loop}")
 
     with path.open("r", encoding="utf-8") as handle:
         loaded = yaml.safe_load(handle)
 
     if not isinstance(loaded, dict):
         raise ConfigError(f"config file {path} must contain a YAML mapping at the top level")
-    return loaded
+
+    parent_name = loaded.pop("extends", None)
+    if parent_name is None:
+        return loaded
+    if not isinstance(parent_name, str):
+        raise ConfigError(
+            f"'extends' in {path} must be a filename, got {parent_name!r}"
+        )
+
+    base = load_config(path.parent / parent_name, _chain=(*_chain, resolved))
+    return _deep_merge(base, loaded)
 
 
 def require(config: dict[str, Any], dotted_key: str) -> Any:

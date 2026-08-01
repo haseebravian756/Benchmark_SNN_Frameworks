@@ -18,7 +18,7 @@ from src.config import ConfigError
 FRAMEWORKS = ["snntorch", "spikingjelly", "norse"]
 
 # Which of the above are actually implemented so far.
-IMPLEMENTED = ["snntorch"]
+IMPLEMENTED = ["snntorch", "spikingjelly", "norse"]
 
 
 def lif_factory(framework: str, neuron_cfg: dict[str, Any]) -> Callable[[], BaseLIF]:
@@ -41,5 +41,15 @@ def lif_factory(framework: str, neuron_cfg: dict[str, Any]) -> Callable[[], Base
         from src.adapters.snntorch_lif import SnnTorchLIF
 
         return partial(SnnTorchLIF, neuron_cfg)
+
+    if framework == "spikingjelly":
+        from src.adapters.spikingjelly_lif import SpikingJellyLIF
+
+        return partial(SpikingJellyLIF, neuron_cfg)
+
+    if framework == "norse":
+        from src.adapters.norse_lif import NorseLIF
+
+        return partial(NorseLIF, neuron_cfg)
 
     raise ConfigError(f"no factory wired up for '{framework}'")  # pragma: no cover

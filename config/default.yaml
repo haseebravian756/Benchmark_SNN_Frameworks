@@ -126,6 +126,29 @@ neuron:
     v_threshold: 1.0
     v_reset: 0.0
 
+    # Whether gradient is allowed to flow back through the reset.
+    # MEASURED, not cosmetic: on a 6-step test, flipping this changed
+    # d(spikes)/d(weight) from 2.64 to 4.34 -- a 64% change in gradient size.
+    # false (SpikingJelly's own default) lets gradient through, which matches
+    # snnTorch, whose reset path also carries gradient. Affects training only.
+    detach_reset: false
+
+    # 's' = one timestep per forward call. The shared network in src/network.py
+    # loops over timesteps and hands each layer one frame, so 's' is required
+    # and the code rejects 'm' loudly.
+    #
+    # WHY THIS MATTERS FOR THE BENCHMARK: single-step supports only the 'torch'
+    # backend (verified). SpikingJelly's fused CUDA kernel -- the 'cupy' backend
+    # and the source of the speed advantage claimed in Fang et al. 2023 --
+    # requires 'm'. So this configuration measures SpikingJelly WITHOUT its
+    # headline optimisation. That is the correct choice for "identical
+    # computation across frameworks", but it must be stated in the write-up,
+    # and "SpikingJelly in multi-step cupy mode" is a worthwhile follow-up.
+    # Verified: 'm' and looped 's' produce identical spikes, so such a run would
+    # differ in speed only, never in accuracy.
+    step_mode: s
+    backend: torch
+
     # VERIFIED: SpikingJelly's default surrogate is Sigmoid(alpha=4.0), not ATan.
     surrogate:
       type: atan
@@ -146,18 +169,40 @@ neuron:
     v_reset: 0.0
     v_leak: 0.0
 
+    # How a spike resets the membrane. This is Norse's equivalent of snnTorch's
+    # `reset_mechanism` above.
+    #   value    - hard reset: jump to v_reset          (matches the other two)
+    #   subtract - soft reset: subtract the threshold
+    reset_method: value
+
     # Because decay and gain are locked (see above), choosing decay 0.9 forces
     # input gain 0.1. The input is multiplied by this factor before it reaches
     # the neuron, to bring the effective gain back to 1.0:  0.1 * 10.0 = 1.0
     input_scale: 10.0
 
-    # Norse has no native ATan surrogate. SuperSpike with alpha 10 is the
-    # closest available (its own default is alpha=100). This is a documented
-    # framework limitation, not an error -- and it affects the backward pass
-    # only, so the equivalence check is unaffected.
+    # Norse has no ATan surrogate. The reference doc says to use SuperSpike with
+    # alpha=10 as the closest match -- DO NOT. Two measured reasons:
+    #
+    #   1. norse 1.1.0's SuperSpike IGNORES alpha entirely. Its backward reads
+    #      grad = grad_output / (|x| + 1)^2, with ctx.alpha never referenced, so
+    #      alpha=1, 10 and 100 give byte-identical gradients. Fixed upstream in
+    #      commit 1d2671a (Aug 2024) but never released -- see
+    #      docs/norse_superspike_alpha_finding.md.
+    #   2. Consequently SuperSpike behaves as alpha=1, whose tails are far
+    #      fatter than ATan(2) (at x=1.0: 0.250 vs 0.092). Measured effect:
+    #      Norse's conv1 gradient norm was 6.03x the other two frameworks', so
+    #      with a shared learning rate Norse would train at ~6x the step size.
+    #
+    # `circ` DOES respect alpha, and alpha=0.5 tracks ATan(2) about 10x more
+    # closely (curve MSE 0.0017 vs 0.0163) -- at x=1.0 it gives 0.0894 against
+    # ATan's 0.0920. Measured gradient ratio drops from 6.03x to 1.19x.
+    #
+    # Norse still cannot match EXACTLY -- that remains a documented limitation --
+    # but this is far closer than the literature assumes. To reproduce the
+    # doc's original choice for comparison, use config/norse_super.yaml.
     surrogate:
-      type: super
-      alpha: 10.0
+      type: circ
+      alpha: 0.5
 
 # ---------------------------------------------------------------------------
 # training: ONE block, shared by all three frameworks.

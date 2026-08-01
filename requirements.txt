@@ -18,7 +18,16 @@ norse==1.1.0
 spikingjelly==0.0.0.0.14
 tonic==1.6.0
 
-# numpy is held below 2.0 because Tonic's dependency chain (numba) requires it.
+# numpy is held below 2.0 because TONIC ITSELF declares `numpy<2.0.0`
+# (verified from tonic 1.6.0's metadata). This line is documentation -- pip
+# enforces it regardless.
+#
+# Consequence on Colab/Kaggle, which ship numpy 2.x: installing this downgrades
+# numpy, and pip then prints a wall of conflict warnings for unrelated
+# preinstalled packages (opencv, jax, rasterio, shap, cupy, pytensor...). Those
+# are NOT part of this pipeline and the warnings are expected. Confirm the
+# environment is actually healthy by running check_env.py, which imports
+# everything this project uses.
 numpy<2.0
 pandas
 pyyaml

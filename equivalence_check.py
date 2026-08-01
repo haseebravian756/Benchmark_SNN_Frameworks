@@ -157,30 +157,14 @@ def run_snntorch(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
 
 
 def run_spikingjelly(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
-    from spikingjelly.activation_based import functional, neuron
-    from spikingjelly.activation_based import surrogate as sj_surrogate
+    from spikingjelly.activation_based import functional
 
-    prefix = "spikingjelly"
-    surrogate_type = require_str(neuron_cfg, f"{prefix}.surrogate.type")
-    surrogate_alpha = require_float(neuron_cfg, f"{prefix}.surrogate.alpha")
+    # Same builder the training adapter uses, so SpikingJelly's parameters are
+    # read in exactly one place and the two cannot drift apart.
+    from src.adapters.spikingjelly_lif import build_lif_node
 
-    builders = {"atan": sj_surrogate.ATan, "sigmoid": sj_surrogate.Sigmoid}
-    if surrogate_type not in builders:
-        raise ConfigError(
-            f"neuron.spikingjelly.surrogate.type '{surrogate_type}' is not supported. "
-            f"Supported: {sorted(builders)}"
-        )
-
-    shared = {
-        "tau": require_float(neuron_cfg, f"{prefix}.tau"),
-        # False keeps the input gain at 1. True (the default) divides input by tau.
-        "decay_input": require_bool(neuron_cfg, f"{prefix}.decay_input"),
-        "v_reset": require_float(neuron_cfg, f"{prefix}.v_reset"),
-        "surrogate_function": builders[surrogate_type](alpha=surrogate_alpha),
-        "step_mode": "s",  # feed one timestep at a time
-    }
-    real = neuron.LIFNode(v_threshold=require_float(neuron_cfg, f"{prefix}.v_threshold"), **shared)
-    shadow = neuron.LIFNode(v_threshold=NEVER_FIRES_THRESHOLD, **shared)
+    real = build_lif_node(neuron_cfg)
+    shadow = build_lif_node(neuron_cfg, v_threshold=NEVER_FIRES_THRESHOLD)
     functional.reset_net(real)
     functional.reset_net(shadow)
 
@@ -206,32 +190,20 @@ def run_spikingjelly(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace
 
 
 def run_norse(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
-    from norse.torch.functional.lif_box import LIFBoxFeedForwardState, LIFBoxParameters
-    from norse.torch.module.lif_box import LIFBoxCell
+    from norse.torch.functional.lif_box import LIFBoxFeedForwardState
 
-    prefix = "norse"
-    shared = {
-        "tau_mem_inv": torch.as_tensor(require_float(neuron_cfg, f"{prefix}.tau_mem_inv")),
-        "v_leak": torch.as_tensor(require_float(neuron_cfg, f"{prefix}.v_leak")),
-        "v_reset": torch.as_tensor(require_float(neuron_cfg, f"{prefix}.v_reset")),
-        # Norse names its surrogate by a method string rather than an object.
-        "method": require_str(neuron_cfg, f"{prefix}.surrogate.type"),
-        "alpha": torch.as_tensor(require_float(neuron_cfg, f"{prefix}.surrogate.alpha")),
-    }
-    dt = require_float(neuron_cfg, f"{prefix}.dt")
-    real = LIFBoxCell(
-        p=LIFBoxParameters(v_th=torch.as_tensor(require_float(neuron_cfg, f"{prefix}.v_th")), **shared),
-        dt=dt,
-    )
-    shadow = LIFBoxCell(
-        p=LIFBoxParameters(v_th=torch.as_tensor(NEVER_FIRES_THRESHOLD), **shared),
-        dt=dt,
-    )
+    # Same builder the training adapter uses, so Norse's parameters are read in
+    # exactly one place and the two cannot drift apart.
+    from src.adapters.norse_lif import build_lif_box_cell
+    from src.adapters.norse_lif import input_scale as norse_input_scale
+
+    real = build_lif_box_cell(neuron_cfg)
+    shadow = build_lif_box_cell(neuron_cfg, v_th=NEVER_FIRES_THRESHOLD)
 
     # Norse's update is v = (1 - dt*tau_mem_inv)*v + (dt*tau_mem_inv)*input, so
     # its input gain is locked to dt*tau_mem_inv (0.1 here). Scaling the input
     # up by 1/0.1 = 10 restores an effective gain of 1, matching the other two.
-    input_scale = require_float(neuron_cfg, f"{prefix}.input_scale")
+    input_scale = norse_input_scale(neuron_cfg)
 
     membrane = torch.zeros(1)
     v_pre, v_post, spikes = [], [], []
