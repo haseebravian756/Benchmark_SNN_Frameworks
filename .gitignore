@@ -1,0 +1,21 @@
+# Virtual environment (never commit — rebuild it from requirements.txt instead)
+.venv/
+
+# Python bytecode
+__pycache__/
+*.py[cod]
+
+# Datasets and the Tonic disk cache (huge, regenerable)
+data/
+cache/
+
+# Experiment outputs
+results/
+*.png
+!docs/*.png
+
+# Editor / OS noise
+.vscode/
+.idea/
+.DS_Store
+Thumbs.db

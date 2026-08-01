@@ -1,0 +1,29 @@
+# Direct dependencies of this project, with the versions actually verified to
+# work together (see requirements-lock-local.txt for the full frozen tree).
+#
+# Local laptop (CPU-only, for writing code and running equivalence_check.py):
+#     py -3.11 -m venv .venv
+#     .venv\Scripts\python -m pip install torch --index-url https://download.pytorch.org/whl/cpu
+#     .venv\Scripts\python -m pip install -r requirements.txt
+#
+# Colab / Kaggle (torch + CUDA already provided by the platform -- do NOT reinstall it):
+#     pip install -r requirements.txt
+#
+# torch is deliberately NOT pinned here: the correct build differs per platform
+# (CPU wheel locally, the platform's preinstalled CUDA build on Colab/Kaggle).
+torch>=2.0.0
+
+snntorch==1.0.0
+norse==1.1.0
+spikingjelly==0.0.0.0.14
+tonic==1.6.0
+
+# numpy is held below 2.0 because Tonic's dependency chain (numba) requires it.
+numpy<2.0
+pandas
+pyyaml
+matplotlib
+
+# NVML bindings, used to read GPU power for the energy metric.
+# Package name is nvidia-ml-py; the import name is `pynvml`.
+nvidia-ml-py
