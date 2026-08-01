@@ -160,6 +160,38 @@ neuron:
       alpha: 10.0
 
 # ---------------------------------------------------------------------------
+# training: ONE block, shared by all three frameworks.
+#
+# Deliberately NOT per-framework. The optimizer and the loss are plain PyTorch --
+# they belong to none of the three libraries -- and all three networks are
+# ordinary nn.Modules holding ordinary Conv2d/Linear parameters. Giving any
+# framework its own optimizer or learning rate would mean comparing training
+# recipes instead of frameworks.
+# ---------------------------------------------------------------------------
+training:
+  device: cuda      # cuda | cpu. Override at the command line with --device.
+  seed: 0           # fixes weight init AND batch order
+  epochs: 1         # the reference doc suggests 5; 1 is enough for a smoke test
+
+  optimizer:
+    # torch.optim name. nadam | adam | sgd
+    type: nadam
+    # From the reference doc (drop to 0.001 if training is unstable).
+    # CAVEAT worth stating in the write-up: this value comes from a
+    # snnTorch-flavoured recipe. Using it unchanged for all three is the fair
+    # choice, but a single shared learning rate may suit one framework's
+    # gradient scale better than another's.
+    lr: 0.002
+
+  # Plain torch.nn.CrossEntropyLoss, applied to the spike counts accumulated
+  # over T (shape [batch, num_classes]). Nothing custom.
+  #
+  # snnTorch ships its own loss helpers (functional.ce_count_loss and friends).
+  # We deliberately do NOT use them: a loss belonging to one of the three
+  # libraries would not be neutral. torch's own loss belongs to none of them.
+  loss: cross_entropy
+
+# ---------------------------------------------------------------------------
 # equivalence: settings for equivalence_check.py
 #
 # Builds ONE neuron per framework, feeds all three the identical input, and

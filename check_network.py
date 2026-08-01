@@ -63,14 +63,23 @@ def data_info_without_download(dataset_cfg: dict) -> DataInfo:
 
 
 def weight_fingerprint(net: SpikingNet) -> str:
-    """Short hash of every trainable weight, in a fixed order.
+    """Short hash of every TRAINABLE weight, in a fixed order.
 
     Two frameworks built with the same seed must produce the same string. If they
     do not, they are not starting from the same place and no accuracy comparison
     between them means anything.
+
+    Trainable parameters only -- deliberately NOT state_dict(). Each framework
+    registers its own non-trainable buffers on its neuron (snnTorch adds
+    threshold, beta, graded_spikes_factor and reset_mechanism_val per layer;
+    the other two register different ones). Including those would make the
+    fingerprints differ for reasons that have nothing to do with the weights,
+    which is exactly what this check is supposed to rule out.
     """
     digest = hashlib.sha256()
-    for name, tensor in sorted(net.state_dict().items()):
+    for name, tensor in sorted(
+        (n, t) for n, t in net.named_parameters() if t.requires_grad
+    ):
         digest.update(name.encode("utf-8"))
         digest.update(tensor.detach().cpu().numpy().tobytes())
     return digest.hexdigest()[:16]
