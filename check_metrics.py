@@ -105,12 +105,14 @@ def main() -> int:
         activity = spike_rates(net)
 
     print(f"  {'layer':<6}{'type':<18}{'neurons':>10}{'spikes':>14}"
-          f"{'opportunities':>16}{'rate %':>10}")
+          f"{'opportunities':>16}{'rate %':>10}{'/neuron/inf':>14}")
     for row in activity["layers"]:
         print(f"  {row['layer_index']:<6}{row['layer_type']:<18}"
               f"{row['neurons']:>10}{row['total_spikes']:>14.0f}"
-              f"{row['opportunities']:>16}{row['spike_rate_pct']:>10.3f}")
-    print(f"  overall (spike-weighted): {activity['spike_rate_pct']:.3f}%")
+              f"{row['opportunities']:>16}{row['spike_rate_pct']:>10.3f}"
+              f"{row['spikes_per_neuron_per_inference']:>14.4f}")
+    print(f"  overall (spike-weighted): {activity['spike_rate_pct']:.3f}%  "
+          f"= {activity['spikes_per_neuron_per_inference']:.4f} spikes/neuron/inference")
 
     # Counting must be OFF again, or every later timing is polluted.
     still_counting = [type(l).__name__ for l in net.lif_layers() if l.count_spikes]

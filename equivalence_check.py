@@ -379,8 +379,8 @@ def print_divergence(
     """Show the first timestep where the frameworks stop agreeing.
 
     A bare FAIL tells you something is wrong; this tells you *where*, which is
-    normally enough to identify which of the four usual causes it is (input
-    gain, reset type, decay factor, off-by-one -- doc section 6).
+    normally enough to identify which of the four usual causes it is: input
+    gain, reset type, decay factor, or an off-by-one in when the reset lands.
     """
     stacked_pre = torch.stack([traces[name].v_pre for name in FRAMEWORKS])
     stacked_post = torch.stack([traces[name].v_post for name in FRAMEWORKS])

@@ -31,7 +31,7 @@ class BaseLIF(nn.Module):
     snnTorch and Norse hand state back to the caller, SpikingJelly keeps it on
     the module. Hiding that here is what makes the training loop
     framework-agnostic -- and it makes the "forgot to reset between batches"
-    bug (the #1 silent bug in the reference doc) structurally impossible, because
+    bug, the classic silent failure in SNN code, structurally impossible:
     the network resets itself at the start of every forward pass.
     """
 

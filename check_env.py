@@ -85,8 +85,8 @@ def gpu_info() -> dict[str, str]:
 
             # How often does the sensor actually produce a NEW value? Published
             # figures for NVIDIA GPUs are around 10 Hz, i.e. ~100 ms -- far
-            # slower than the 10-20 ms polling the reference doc suggests, and
-            # it caps the resolution of every energy measurement. Detected, not
+            # slower than the 10-20 ms polling that is commonly assumed, and it
+            # caps the resolution of every energy measurement. Detected, not
             # assumed; also run at the start of every training run.
             from src.metrics import detect_update_interval_ms
 

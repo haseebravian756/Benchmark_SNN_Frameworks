@@ -84,7 +84,7 @@ dataset:
 # neuron: one block per framework.
 #
 # The same idealised neuron is described three times, because each framework
-# names and parameterises it differently. Reference target (doc section 3):
+# names and parameterises it differently. Target neuron:
 #   threshold 1.0 | hard reset to 0 | per-step decay 0.9 | input gain 1.0
 # ---------------------------------------------------------------------------
 neuron:
@@ -99,7 +99,7 @@ neuron:
     # which would NOT match the other two. "zero" = hard reset.
     reset_mechanism: zero
 
-    # VERIFIED against snntorch 1.0.0, and NOT mentioned in the reference doc:
+    # VERIFIED against snntorch 1.0.0, and easy to miss:
     # snnTorch defaults to reset_delay=True, which applies a spike's reset on
     # the FOLLOWING timestep. SpikingJelly and Norse both reset immediately.
     # Left at the default, snnTorch's membrane reads 1.2 where the others read
@@ -180,8 +180,9 @@ neuron:
     # the neuron, to bring the effective gain back to 1.0:  0.1 * 10.0 = 1.0
     input_scale: 10.0
 
-    # Norse has no ATan surrogate. The reference doc says to use SuperSpike with
-    # alpha=10 as the closest match -- DO NOT. Two measured reasons:
+    # Norse has no ATan surrogate. SuperSpike with alpha=10 looks like the
+    # closest match and is what most guides suggest -- DO NOT use it. Two
+    # measured reasons:
     #
     #   1. norse 1.1.0's SuperSpike IGNORES alpha entirely. Its backward reads
     #      grad = grad_output / (|x| + 1)^2, with ctx.alpha never referenced, so
@@ -216,16 +217,17 @@ neuron:
 training:
   device: cuda      # cuda | cpu. Override at the command line with --device.
   seed: 0           # fixes weight init AND batch order
-  epochs: 5         # the reference doc suggests 5; 1 is enough for a smoke test
+  # 5 is enough for N-MNIST: measured accuracy plateaus by epoch 4. Use 1 for a
+  # smoke test.
+  epochs: 5
 
   optimizer:
     # torch.optim name. nadam | adam | sgd
     type: nadam
-    # From the reference doc (drop to 0.001 if training is unstable).
-    # CAVEAT worth stating in the write-up: this value comes from a
-    # snnTorch-flavoured recipe. Using it unchanged for all three is the fair
-    # choice, but a single shared learning rate may suit one framework's
-    # gradient scale better than another's.
+    # Drop to 0.001 if training is unstable.
+    # CAVEAT worth stating in the write-up: a single shared learning rate is the
+    # fair choice, but it may suit one framework's gradient scale better than
+    # another's. See the surrogate note in the norse block below.
     lr: 0.002
 
   # Plain torch.nn.CrossEntropyLoss, applied to the spike counts accumulated
@@ -244,7 +246,14 @@ training:
 # measurement, not the experiment.
 # ---------------------------------------------------------------------------
 metrics:
-  results_dir: results
+  # Every experiment writes into its own folder: experiments/exN/{results,equivalence}.
+  # An experiment's CSVs, per-run JSON, equivalence figures and final report all
+  # live together, so the folder is a self-contained record.
+  #
+  # A config for a DIFFERENT experiment must override both this and
+  # equivalence.output_dir, or it will write into ex1's folder. run_id and
+  # config_hash would still tell the rows apart, but the folder would lie.
+  results_dir: experiments/ex1/results
 
   # Forward+backward passes run before timing starts, to compile CUDA kernels
   # and spin up the DataLoader workers. NO optimizer.step() is called, so the
@@ -297,11 +306,11 @@ equivalence:
 
   # Input currents to test. Each one produces its own plot and its own verdict.
   inputs:
-    # Doc section 6, Test A: silent for `onset` steps, then a constant current
-    # switched on and held.
+    # Test A: silent for `onset` steps, then a constant current switched on and
+    # held.
     #
-    # amplitude MUST stay below the threshold (1.0). The doc suggests 1.2, but
-    # with input gain 1.0 that fires on the very first step and every step
+    # amplitude MUST stay below the threshold (1.0). An amplitude above it (say
+    # 1.2) fires on the very first step and every step
     # after, so the membrane is flat at 0 and the test proves nothing -- three
     # broken neurons would agree on a flat line too. At 0.15 the membrane
     # climbs toward 0.15/(1-0.9) = 1.5, crosses the threshold after ~11 steps,
@@ -311,7 +320,7 @@ equivalence:
       onset: 10
       amplitude: 0.15
 
-    # Doc section 6, Test B: a fixed random spike train, which is far closer to
+    # Test B: a fixed random spike train, which is far closer to
     # how real event-camera data arrives. `rate` is the probability of an event
     # at each timestep; `seed` makes it reproducible, so all three frameworks
     # receive the byte-identical input.
@@ -327,7 +336,7 @@ equivalence:
       amplitude: 0.6
       seed: 0
 
-  # PASS/FAIL thresholds (doc section 6, "Pass criteria").
+  # PASS/FAIL thresholds.
   tolerance:
     # Largest allowed difference between any two membrane traces at any
     # timestep. 1e-4 is loose enough for float32 noise, tight enough that a
@@ -338,5 +347,5 @@ equivalence:
     # all three. 1.0 = require a perfect match.
     min_spike_time_match: 1.0
 
-  # Where the overlaid membrane-trace plot is written.
-  output_dir: results
+  # Where the overlaid membrane-trace plots and the pass/fail JSON are written.
+  output_dir: experiments/ex1/equivalence

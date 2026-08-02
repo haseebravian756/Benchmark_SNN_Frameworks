@@ -208,8 +208,8 @@ def append_row(path: Path, columns: list[str], row: dict[str, Any]) -> None:
 def write_run_json(results_dir: Path, run_id: str, payload: dict[str, Any]) -> Path:
     """The complete record for one run: full config, versions, every metric.
 
-    Exists because the reference doc wants the whole config snapshot, and a YAML
-    stuffed into a CSV cell makes the CSV unreadable.
+    Exists because a run is only reproducible if the WHOLE config travels with
+    its numbers, and a YAML stuffed into a CSV cell makes the CSV unreadable.
     """
     path = results_dir / "runs" / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)

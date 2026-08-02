@@ -1,0 +1,33 @@
+# Colab config: identical experiment, results written straight to Google Drive.
+#
+# WHY: /content is wiped when a Colab session ends. Writing results to Drive
+# means completed runs survive a disconnect -- including one that happens while
+# you are asleep -- with no manual download step.
+#
+# Everything except the output paths is inherited from default.yaml, so this
+# cannot drift from the real experiment.
+#
+#   from google.colab import drive
+#   drive.mount('/content/drive')
+#   !mkdir -p /content/drive/MyDrive/snn_results/ex1
+#   !python train.py --config config/colab.yaml --framework snntorch
+#
+# Results are written at the END of each run, so an interrupted run loses only
+# itself; every run that finished is already safe on Drive.
+#
+# Afterwards, on your laptop:
+#   python collect_results.py --from "<Drive folder>/ex1" --experiment ex1
+# which merges the rows into experiments/ex1/ without duplicating anything.
+#
+# NOTE: the dataset cache deliberately stays on local disk (default.yaml's
+# `cache_dir: cache`). It is ~6.5 GB and read constantly during training, and
+# Drive is far too slow for that. The cache is rebuilt per session; the results
+# are what must survive.
+
+extends: default.yaml
+
+metrics:
+  results_dir: /content/drive/MyDrive/snn_results/ex1/results
+
+equivalence:
+  output_dir: /content/drive/MyDrive/snn_results/ex1/equivalence

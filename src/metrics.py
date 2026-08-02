@@ -110,12 +110,19 @@ def spike_counting(net) -> Iterator[None]:
 
 
 def spike_rates(net) -> dict[str, Any]:
-    """Read the accumulated counts. Percentages, per layer plus overall.
+    """Read the accumulated counts, in BOTH standard units.
+
+    `spike_rate_pct` -- share of (neuron x timestep) chances taken. Intuitive.
+    `spikes_per_neuron_per_inference` -- the same thing x T. This is the unit the
+        SNN literature usually reports (e.g. "0.4 spikes per neuron" for
+        convolutional SNNs), so quoting it makes the result directly comparable
+        to published figures without the reader converting anything.
 
     The overall figure is spike-WEIGHTED (total spikes / total opportunities),
     not the mean of the per-layer percentages -- averaging the percentages would
     give a 10-neuron output layer the same weight as a 10,800-neuron conv layer.
     """
+    time_steps = getattr(net, "time_steps", None)
     per_layer = []
     total_spikes = 0.0
     total_slots = 0
@@ -124,6 +131,7 @@ def spike_rates(net) -> dict[str, Any]:
         spikes = layer.spike_total
         if isinstance(spikes, torch.Tensor):
             spikes = spikes.item()
+        rate = layer.spike_rate()  # fraction
         per_layer.append(
             {
                 "layer_index": index,
@@ -131,15 +139,27 @@ def spike_rates(net) -> dict[str, Any]:
                 "neurons": layer.neurons(),
                 "total_spikes": float(spikes),
                 "opportunities": layer.spike_slots,
-                "spike_rate_pct": 100.0 * layer.spike_rate(),
+                "spike_rate_pct": 100.0 * rate,
+                # One inference = one forward pass over all T timesteps for one
+                # sample, so a neuron gets T chances to fire per inference.
+                "spikes_per_neuron_per_inference": (
+                    rate * time_steps if time_steps else None
+                ),
             }
         )
         total_spikes += float(spikes)
         total_slots += layer.spike_slots
 
-    overall = 100.0 * total_spikes / total_slots if total_slots else 0.0
-    return {"layers": per_layer, "spike_rate_pct": overall,
-            "total_spikes": total_spikes, "total_opportunities": total_slots}
+    overall_fraction = total_spikes / total_slots if total_slots else 0.0
+    return {
+        "layers": per_layer,
+        "spike_rate_pct": 100.0 * overall_fraction,
+        "spikes_per_neuron_per_inference": (
+            overall_fraction * time_steps if time_steps else None
+        ),
+        "total_spikes": total_spikes,
+        "total_opportunities": total_slots,
+    }
 
 
 # ---------------------------------------------------------------------------

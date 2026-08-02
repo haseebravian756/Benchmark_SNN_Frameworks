@@ -91,11 +91,87 @@ def weight_fingerprint(net: SpikingNet) -> str:
     return digest.hexdigest()[:16]
 
 
+def summarise_framework(
+    framework: str, neuron_cfg: dict, info: DataInfo, seed: int, batch: int
+) -> dict:
+    """Build one framework's network and report the things that must match."""
+    net = build_network(lif_factory(framework, neuron_cfg), info, seed=seed)
+
+    dummy = torch.zeros(info.time_steps, batch, info.channels, info.height, info.width)
+    with torch.no_grad():
+        output = net(dummy)
+    state_before = [layer.has_state() for layer in net.lif_layers()]
+    net.reset()
+    state_after = [layer.has_state() for layer in net.lif_layers()]
+
+    linear = [m for m in net.layers if isinstance(m, torch.nn.Linear)][0]
+    return {
+        "framework": framework,
+        "fingerprint": weight_fingerprint(net),
+        "params": sum(p.numel() for p in net.parameters() if p.requires_grad),
+        "flatten": linear.in_features,
+        "output_shape": tuple(output.shape),
+        "neuron": type(net.lif_layers()[0]).__name__,
+        "surrogate": net.lif_layers()[0].describe().get("surrogate", "?"),
+        "state_after_forward": any(state_before),
+        "state_after_reset": any(state_after),
+    }
+
+
+def compare_all(neuron_cfg: dict, info: DataInfo, seed: int, batch: int) -> int:
+    """Build every implemented framework and check they agree where they must.
+
+    Safe to load all three in one process here: this script measures nothing, so
+    there is no timing or CUDA state to contaminate. train.py deliberately does
+    NOT do this -- there, one framework per process is the whole point.
+    """
+    rows = [summarise_framework(f, neuron_cfg, info, seed, batch) for f in IMPLEMENTED]
+
+    print("=" * 78)
+    print(f"ALL FRAMEWORKS, seed {seed}")
+    print("=" * 78)
+    print(f"{'framework':<14}{'fingerprint':>18}{'params':>10}{'flatten':>9}"
+          f"{'output':>12}{'reset ok':>10}")
+    print("-" * 78)
+    for row in rows:
+        reset_ok = "yes" if (row["state_after_forward"] and not row["state_after_reset"]) else "NO"
+        print(f"{row['framework']:<14}{row['fingerprint']:>18}{row['params']:>10,}"
+              f"{row['flatten']:>9}{str(row['output_shape']):>12}{reset_ok:>10}")
+
+    print()
+    print("neuron and surrogate (these are SUPPOSED to differ):")
+    for row in rows:
+        print(f"  {row['framework']:<14}{row['neuron']:<18}{row['surrogate']}")
+
+    print()
+    print("=" * 78)
+    checks = [
+        ("weight fingerprints identical", len({r["fingerprint"] for r in rows}) == 1),
+        ("trainable parameters identical", len({r["params"] for r in rows}) == 1),
+        ("flatten size identical", len({r["flatten"] for r in rows}) == 1),
+        ("output shapes identical", len({r["output_shape"] for r in rows}) == 1),
+        ("reset clears state everywhere",
+         all(r["state_after_forward"] and not r["state_after_reset"] for r in rows)),
+    ]
+    for name, ok in checks:
+        print(f"  {'PASS' if ok else 'FAIL'}  {name}")
+
+    passed = all(ok for _, ok in checks)
+    print("=" * 78)
+    print(f"OVERALL: {'PASS' if passed else 'FAIL'}")
+    if not passed:
+        print("\nThe frameworks do NOT start from the same place. Any accuracy")
+        print("comparison between them would be meaningless until this is fixed.")
+    return 0 if passed else 1
+
+
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/default.yaml")
     parser.add_argument("--framework", default="snntorch",
                         help=f"implemented so far: {IMPLEMENTED}")
+    parser.add_argument("--all", action="store_true",
+                        help="build every framework and compare them side by side")
     parser.add_argument("--seed", type=int, default=0)
     parser.add_argument("--batch", type=int, default=4,
                         help="dummy batch size (small keeps this fast on CPU)")
@@ -106,6 +182,13 @@ def main() -> int:
     neuron_cfg = require(config, "neuron")
 
     info = data_info_without_download(dataset_cfg)
+
+    if args.all:
+        print(f"data      : T={info.time_steps}  "
+              f"{info.channels}x{info.height}x{info.width}  "
+              f"-> {info.num_classes} classes\n")
+        return compare_all(neuron_cfg, info, args.seed, args.batch)
+
     print(f"framework : {args.framework}")
     print(f"seed      : {args.seed}")
     print(f"data      : T={info.time_steps}  {info.channels}x{info.height}x{info.width}"

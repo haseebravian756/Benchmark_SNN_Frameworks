@@ -88,8 +88,8 @@ class SnnTorchLIF(BaseLIF):
     def reset(self) -> None:
         """Drop the membrane.
 
-        The reference doc says to use snnTorch's `utils.reset(net)`. We do not,
-        and the reason is worth knowing: `utils.reset` works through CLASS-level
+        snnTorch's own documented approach is `utils.reset(net)`. We do not use
+        it, and the reason is worth knowing: `utils.reset` works through CLASS-level
         methods (`snn.Leaky.reset_hidden()`), so it resets every snn.Leaky
         instance alive in the process, not just the ones in your network. Setting
         our own state to None is local, explicit, and cannot reach into anything

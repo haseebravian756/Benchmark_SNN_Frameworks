@@ -376,10 +376,16 @@ def main() -> int:
                  require_int(metrics_cfg, "spike_batches"), "spikes",
                  report_every=10**9)
         activity = spike_rates(net)
+    print(f"  {'layer':<7}{'type':<18}{'neurons':>9}{'rate %':>9}"
+          f"{'spikes/neuron/inference':>26}")
     for row in activity["layers"]:
-        print(f"  layer {row['layer_index']} {row['layer_type']:<18} "
-              f"{row['neurons']:>7} neurons   {row['spike_rate_pct']:6.3f}%")
-    print(f"  overall {activity['spike_rate_pct']:.3f}%")
+        print(f"  {row['layer_index']:<7}{row['layer_type']:<18}{row['neurons']:>9}"
+              f"{row['spike_rate_pct']:>9.3f}"
+              f"{row['spikes_per_neuron_per_inference']:>26.4f}")
+    print(f"  {'overall':<7}{'':<18}{'':>9}{activity['spike_rate_pct']:>9.3f}"
+          f"{activity['spikes_per_neuron_per_inference']:>26.4f}")
+    print("  ^ spikes/neuron/inference = rate x T; the unit the SNN literature")
+    print("    reports, so it is directly comparable to published figures")
 
     # ---- region 7: write ---------------------------------------------------
     environment = environment_info(args.framework)
@@ -469,7 +475,12 @@ def main() -> int:
           f"train {train_time_s:.1f}s   "
           f"throughput {throughput:.1f}/s   "
           f"latency {latency['latency_ms']:.2f}ms   "
-          f"spikes {activity['spike_rate_pct']:.2f}%")
+          f"spikes {activity['spike_rate_pct']:.2f}% "
+          f"({activity['spikes_per_neuron_per_inference']:.3f}/neuron/inference)")
+    if total_energy_j is not None:
+        print(f"energy   {total_energy_j:.1f} J total   "
+              f"{dynamic_j:.1f} J dynamic   "
+              f"(idle {idle_hot['mean_w']:.1f} W over {energy_span_s:.0f}s)")
     print("=" * 70)
     return 0
 
