@@ -1,4 +1,0 @@
-schema_version,run_id,layer_index,layer_type,neurons,total_spikes,opportunities,spike_rate_pct
-1,20260802_122610_snntorch_seed1,0,SnnTorchLIF,10800,1.56772e+07,552960000,2.83514
-1,20260802_122610_snntorch_seed1,1,SnnTorchLIF,3872,5.02969e+06,198246400,2.53709
-1,20260802_122610_snntorch_seed1,2,SnnTorchLIF,10,47980,512000,9.37109

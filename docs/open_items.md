@@ -1,7 +1,11 @@
 # Open items
 
 Things deliberately deferred, one line each. Not a backlog of bugs — these are
-choices we made to postpone, kept here so they are not silently forgotten.
+choices made to postpone, kept here so they are not silently forgotten.
+
+> **The experiments below are IDEAS, not a committed plan.** Only Experiment 1
+> is real. Nothing here should be treated as decided, scheduled, or something to
+> build towards.
 
 Add to it as things come up. Move an item out when it is done or abandoned.
 
