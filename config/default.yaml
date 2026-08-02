@@ -9,6 +9,13 @@
 # not derive, translate, or "fix" any of them -- what you write here is what
 # the neuron gets.
 
+# NOTE ON OUTPUT PATHS: this file says nothing about where results go. That is
+# decided per run, on the command line:
+#     --experiment ex2                 -> experiments/ex2/{results,equivalence}
+#     --results-root <path>            -> put that folder somewhere else (Colab)
+#     (neither)                        -> local_runs/, flat, for scratch work
+# A config describes the experiment's science; the CLI decides the folder.
+
 # ---------------------------------------------------------------------------
 # dataset: event data loading. Nothing here is framework-specific -- all three
 # frameworks read byte-identical batches from the same cache, so data
@@ -246,14 +253,8 @@ training:
 # measurement, not the experiment.
 # ---------------------------------------------------------------------------
 metrics:
-  # Every experiment writes into its own folder: experiments/exN/{results,equivalence}.
-  # An experiment's CSVs, per-run JSON, equivalence figures and final report all
-  # live together, so the folder is a self-contained record.
-  #
-  # A config for a DIFFERENT experiment must override both this and
-  # equivalence.output_dir, or it will write into ex1's folder. run_id and
-  # config_hash would still tell the rows apart, but the folder would lie.
-  results_dir: experiments/ex1/results
+  # Output location comes from the `experiment` block at the top of this file,
+  # not from here -- see its comment.
 
   # Forward+backward passes run before timing starts, to compile CUDA kernels
   # and spin up the DataLoader workers. NO optimizer.step() is called, so the
@@ -347,5 +348,4 @@ equivalence:
     # all three. 1.0 = require a perfect match.
     min_spike_time_match: 1.0
 
-  # Where the overlaid membrane-trace plots and the pass/fail JSON are written.
-  output_dir: experiments/ex1/equivalence
+  # Output location comes from the `experiment` block at the top of this file.

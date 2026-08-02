@@ -205,13 +205,17 @@ def append_row(path: Path, columns: list[str], row: dict[str, Any]) -> None:
         writer.writerow([_format(row.get(column)) for column in columns])
 
 
-def write_run_json(results_dir: Path, run_id: str, payload: dict[str, Any]) -> Path:
+def write_run_json(
+    results_dir: Path, run_id: str, payload: dict[str, Any], flat: bool = False
+) -> Path:
     """The complete record for one run: full config, versions, every metric.
 
     Exists because a run is only reproducible if the WHOLE config travels with
     its numbers, and a YAML stuffed into a CSV cell makes the CSV unreadable.
     """
-    path = results_dir / "runs" / f"{run_id}.json"
+    # `flat` keeps local_runs/ a single folder -- run_id already carries a
+    # timestamp, so no subfolder is needed to keep scratch runs apart.
+    path = (results_dir if flat else results_dir / "runs") / f"{run_id}.json"
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(json.dumps(payload, indent=2, default=str), encoding="utf-8")
     return path
@@ -223,6 +227,7 @@ def write_results(
     epoch_rows: list[dict[str, Any]],
     layer_rows: list[dict[str, Any]],
     json_payload: dict[str, Any],
+    flat: bool = False,
 ) -> dict[str, Path]:
     """Write all four artefacts for one run."""
     results_dir = Path(results_dir)
@@ -247,7 +252,7 @@ def write_results(
     for row in layer_rows:
         append_row(paths["layers"], LAYER_COLUMNS, row)
 
-    paths["json"] = write_run_json(results_dir, run_id, json_payload)
+    paths["json"] = write_run_json(results_dir, run_id, json_payload, flat)
     return paths
 
 

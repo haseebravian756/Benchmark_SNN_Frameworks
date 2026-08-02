@@ -17,14 +17,8 @@
 
 extends: default.yaml
 
-# Its own experiment folder. Without this it would inherit ex1's paths and mix
-# these rows into ex1's CSV -- run_id and config_hash would still tell them
-# apart, but the folder would no longer be a clean record of one experiment.
-metrics:
-  results_dir: experiments/ex6_norse_surrogate/results
-
-equivalence:
-  output_dir: experiments/ex6_norse_surrogate/equivalence
+# Nothing about output paths here -- pass --experiment on the command line, e.g.
+#   python train.py --config config/norse_super.yaml --experiment ex6 --framework norse
 
 neuron:
   norse:

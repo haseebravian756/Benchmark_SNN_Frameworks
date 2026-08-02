@@ -32,6 +32,7 @@ import torch  # noqa: E402
 from src.config import (  # noqa: E402
     ConfigError,
     load_config,
+    output_dirs,
     require,
     require_bool,
     require_choice,
@@ -566,6 +567,12 @@ def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument("--config", default="config/default.yaml",
                         help="path to the YAML config (default: config/default.yaml)")
+    parser.add_argument("--experiment", default=None,
+                        help="experiment folder name, e.g. ex2. Omit for scratch "
+                             "runs, which go flat into local_runs/")
+    parser.add_argument("--results-root", default="experiments",
+                        help="where experiment folders live; on Colab use "
+                             "/content/drive/MyDrive/snn_results")
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -586,7 +593,7 @@ def main() -> int:
         "max_v_deviation": require_float(config, "equivalence.tolerance.max_v_deviation"),
         "min_spike_time_match": require_float(config, "equivalence.tolerance.min_spike_time_match"),
     }
-    output_dir = Path(require_str(config, "equivalence.output_dir"))
+    _, output_dir, _ = output_dirs(args.experiment, args.results_root)
 
     input_specs = require(config, "equivalence.inputs")
     if not isinstance(input_specs, list) or not input_specs:

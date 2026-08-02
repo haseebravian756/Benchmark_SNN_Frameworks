@@ -35,7 +35,9 @@ import torch.nn as nn
 from src.adapters import IMPLEMENTED, lif_factory
 from src.config import (
     ConfigError,
+    ephemeral_storage_warning,
     load_config,
+    output_dirs,
     require,
     require_bool,
     require_choice,
@@ -214,6 +216,14 @@ def main() -> int:
     parser.add_argument("--max-eval-batches", type=int, default=None)
     parser.add_argument("--no-energy", action="store_true",
                         help="skip NVML entirely (also skipped if unavailable)")
+    parser.add_argument("--experiment", default=None,
+                        help="experiment folder name, e.g. ex2. Omit for scratch "
+                             "runs, which go flat into local_runs/")
+    parser.add_argument("--results-root", default="experiments",
+                        help="where experiment folders live; on Colab use "
+                             "/content/drive/MyDrive/snn_results")
+    parser.add_argument("--allow-ephemeral", action="store_true",
+                        help="permit writing results to Colab's temporary disk")
     parser.add_argument("--notes", default="", help="free text stored with the run")
     args = parser.parse_args()
 
@@ -226,13 +236,20 @@ def main() -> int:
     device = resolve_device(args.device or require_str(training_cfg, "device"))
     seed = args.seed if args.seed is not None else require_int(training_cfg, "seed")
     epochs = args.epochs if args.epochs is not None else require_int(training_cfg, "epochs")
-    results_dir = Path(require_str(metrics_cfg, "results_dir"))
+
+    results_dir, _, flat = output_dirs(args.experiment, args.results_root)
+    warning = ephemeral_storage_warning(results_dir)
+    if warning and not args.allow_ephemeral:
+        raise ConfigError(warning)
+    if warning:
+        print(f"WARNING: {warning}\n")
 
     started = datetime.now()
     run_id = make_run_id(args.framework, seed, started)
 
     print("=" * 70)
     print(f"run_id      {run_id}")
+    print(f"experiment  {args.experiment or 'none (scratch)'}   -> {results_dir}")
     print(f"framework   {args.framework}")
     print(f"device      {device}" + (f"  ({torch.cuda.get_device_name(0)})"
                                      if device.type == "cuda" else ""))
@@ -459,6 +476,7 @@ def main() -> int:
             "idle_power_after_train": idle_hot,
             "energy_warnings": warnings,
         },
+        flat=flat,
     )
 
     print("\n[7] results written")

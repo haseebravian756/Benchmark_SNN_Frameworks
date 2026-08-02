@@ -23,6 +23,7 @@ batch to the network at a time.
 
 from __future__ import annotations
 
+import hashlib
 import json
 from pathlib import Path
 from typing import Any, Callable, NamedTuple
@@ -158,15 +159,26 @@ def build_framing(dataset_cfg: dict[str, Any], sensor_size: tuple[int, int, int]
 
 
 def cache_key(framing: dict[str, Any], dataset_options: dict[str, Any]) -> str:
-    """Directory name encoding everything that changes the cached frames.
+    """Short directory name: a readable hint plus a hash of every setting.
 
-    Different framing settings therefore land in different directories
-    automatically: both stay on disk and both stay reusable, and there is no way
-    to accidentally read 20-bin frames when you asked for 30.
+    e.g.  t20_dn10000_9f3a2b
+
+    The name only has to be UNIQUE and roughly recognisable. What actually
+    guarantees you never read 20-bin frames when you asked for 30 is
+    `manifest.json` inside the directory, which records every setting in full
+    and is checked on load. Encoding all of that in the directory name too
+    produced ~100-character paths for no benefit.
     """
-    parts = [f"{key}-{value}" for key, value in sorted(framing.items())]
-    parts += [f"{key}-{value}" for key, value in sorted(dataset_options.items())]
-    return "_".join(parts)
+    payload = json.dumps({**framing, **dataset_options}, sort_keys=True, default=str)
+    digest = hashlib.sha256(payload.encode("utf-8")).hexdigest()[:6]
+
+    if framing.get("mode") == "n_time_bins":
+        shape = f"t{framing['n_time_bins']}"
+    else:
+        shape = f"w{framing['time_window_us']}f{framing['frames']}"
+
+    denoise = dataset_options.get("denoise_filter_time_us")
+    return f"{shape}_dn{denoise if denoise else 0}_{digest}"
 
 
 def check_manifest(cache_dir: Path, expected: dict[str, Any]) -> bool:

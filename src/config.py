@@ -164,6 +164,51 @@ def require_str(config: dict[str, Any], dotted_key: str) -> str:
     return value
 
 
+LOCAL_RUNS = Path("local_runs")
+
+
+def output_dirs(
+    experiment: str | None, results_root: str = "experiments"
+) -> tuple[Path, Path, bool]:
+    """Where output goes: (results_dir, equivalence_dir, flat).
+
+    Config files know NOTHING about this. A config describes the experiment's
+    science; the command line decides the folder and the machine:
+
+        --experiment ex2        which folder, chosen per run
+        --results-root <path>   where folders live, chosen per machine
+
+    With no --experiment, everything lands flat in `local_runs/`. Filenames carry
+    timestamps, so scratch work needs neither a hierarchy nor a naming decision.
+    """
+    if experiment is None:
+        return LOCAL_RUNS, LOCAL_RUNS, True
+    base = Path(results_root) / experiment
+    return base / "results", base / "equivalence", False
+
+
+def ephemeral_storage_warning(results_root: Path) -> str | None:
+    """On Colab, is this path about to be deleted when the session ends?
+
+    /content is wiped on disconnect. Writing results there has already cost one
+    run, so this is checked before anything expensive starts rather than
+    discovered afterwards.
+    """
+    on_colab = Path("/content").is_dir()
+    if not on_colab:
+        return None
+    absolute = results_root.resolve()
+    if str(absolute).startswith("/content/drive"):
+        return None  # Google Drive, persistent
+    return (
+        f"results would be written to {absolute}, which is on Colab's temporary "
+        f"disk and is DELETED when the session ends.\n"
+        f"  Fix: --results-root /content/drive/MyDrive/snn_results  "
+        f"(after mounting Drive)\n"
+        f"  Or pass --allow-ephemeral if you really mean it."
+    )
+
+
 def require_choice(config: dict[str, Any], dotted_key: str, allowed: list[str]) -> str:
     """Same as require_str(), but the value must be one of `allowed`."""
     value = require_str(config, dotted_key)

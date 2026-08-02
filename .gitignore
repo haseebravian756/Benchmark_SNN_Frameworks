@@ -9,10 +9,14 @@ __pycache__/
 data/
 cache/
 
-# Scratch output from local runs. Leading slash = ROOT ONLY, so that
-# experiments/exN/results/ is NOT caught by this and stays tracked — those CSVs
-# are the actual scientific output and belong in version control.
+# Scratch output. Leading slash = ROOT ONLY, so that experiments/exN/results/
+# is NOT caught by this and stays tracked — those CSVs are the actual
+# scientific output and belong in version control.
 /results/
+/local_runs/
+/local_docs/
+/experiments/
+/experiments/ex*/
 
 # Landing zones for files pulled off Colab before collect_results.py files them
 # (temp_colab, temp_colab_1, temp_colab_seed2, ...)
@@ -20,9 +24,6 @@ temp_colab*/
 
 # Stray images anywhere...
 *.png
-# ...except the ones that are part of an experiment record or the docs
-!experiments/**/*.png
-!docs/*.png
 
 # Editor / OS noise
 .vscode/
