@@ -44,6 +44,7 @@ $EXP = "ex2"                         # ex1: ex1
 
 # ── 2. is the network identical in all three frameworks?
 #      AND are the neuron settings the ones this experiment asked for?
+#      --seed defaults to 0; run all three before a full sweep (see below)
 .venv\Scripts\python check_network.py --config $CFG --experiment $EXP --all
 
 # ── 3. do the neurons behave identically?  (writes to $EXP/equivalence/)
@@ -56,6 +57,7 @@ $EXP = "ex2"                         # ex1: ex1
 .venv\Scripts\python prepare_data.py --config $CFG --experiment $EXP
 
 # ── 6. the actual runs — 3 frameworks x 3 seeds  (GPU; on Colab, see §3)
+#      --seed IS the run: loop 0 1 2, each gives its own row in runs.csv
 .venv\Scripts\python train.py --config $CFG --experiment $EXP `
     --framework snntorch --seed 0
 
@@ -88,6 +90,47 @@ dataset.
 > so it changes nothing — it just stamps the output with which experiment you were
 > checking for, so a scrolled-back terminal still says. Steps 3 and 6–9 use it for
 > real, to decide the output folder.
+
+#### Where `--seed` matters
+
+**Only two scripts take it at all:** `train.py` (step 6) and `check_network.py`
+(step 2). The rest have no `--seed` flag.
+
+| | |
+|---|---|
+| **`train.py` — required in practice** | The seed *is* the run. You loop `0 1 2`, and each value produces a separate row in `runs.csv`. Omit it and you silently get the config's `training.seed` three times, i.e. the same run repeated. |
+| **`check_network.py` — one seed is enough, but all three is better** | Default `0`. |
+
+Why one is enough: the check asks *"do all three frameworks start from identical
+weights?"*, and that is a property of how the network is built, not of which seed
+built it. **Verified — it passes at every seed:**
+
+| seed | fingerprint (this laptop) | verdict |
+|---|---|---|
+| 0 | `d03b6a70b7398043` | PASS |
+| 1 | `7483b33622fe4829` | PASS |
+| 2 | `e382fb5ad5c94b28` | PASS |
+
+Why all three is better anyway: notice the fingerprints **differ between seeds**.
+Running the check at each seed you intend to train on confirms not only that the
+frameworks agree, but that **`--seed` genuinely changes the initialisation** — a
+silently ignored seed argument is a real failure mode, and it would make three "seeds"
+one run in triplicate. In Experiment 1 this became a reported result (figure F0.2).
+
+So before a full sweep:
+
+```powershell
+foreach ($s in 0,1,2) {
+  .venv\Scripts\python check_network.py --config $CFG --experiment $EXP --seed $s --all
+}
+```
+
+**The other scripts, for completeness:** `equivalence_check.py` has no `--seed` — its
+Poisson input seed lives in the config at `equivalence.inputs[].seed`, so all three
+frameworks receive a byte-identical input. `check_metrics.py` always builds at seed 0
+because it measures the instruments, not the model. `prepare_data.py`,
+`collect_results.py`, `make_plots.py` and `probe_norse_alpha.py` have no seed concept
+at all.
 
 **Every script prints its identity before doing anything** — experiment, config path
 and hash, framework where it applies:
