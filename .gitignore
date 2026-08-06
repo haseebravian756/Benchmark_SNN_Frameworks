@@ -23,6 +23,10 @@ temp_colab*/
 # Stray images anywhere...
 *.png
 
+# ...except the handful the README embeds, which a GitHub visitor must be able to
+# see. Regenerate with: python make_readme_figures.py --experiment ex1
+!docs/figures/*.png
+
 # Editor / OS noise
 .vscode/
 .idea/
