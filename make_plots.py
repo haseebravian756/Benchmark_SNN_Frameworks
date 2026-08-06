@@ -20,6 +20,7 @@ from pathlib import Path
 from src.config import output_dirs
 from src.plots import apply_rcparams, load
 from src.plots import figures as F
+from src.config import run_banner
 from src.plots.style import set_formats
 
 # (family, function). Order is the order they are written and reported.
@@ -118,12 +119,17 @@ def main(argv: list[str] | None = None) -> int:
     apply_rcparams()
     set_formats(formats)
 
-    print(f"reading  {results_dir}")
-    print(f"writing  {out_dir}")
-    print(
-        f"{len(results.runs)} runs · {len(results.conditions)} conditions "
-        f"({', '.join(results.conditions)}) · seeds {results.blocks}"
-    )
+    print(run_banner(
+        "make_plots.py -- draw every figure for one experiment",
+        experiment=args.experiment,
+        output_dir=out_dir,
+        extra={
+            "reading": results_dir,
+            "runs": f"{len(results.runs)}  ({', '.join(results.conditions)})",
+            "seeds": results.blocks,
+            "compared by": args.condition,
+        },
+    ))
     if len(results.blocks) < 2:
         print(
             "note: only one seed present — the paired figures (F2) and every ±SD "

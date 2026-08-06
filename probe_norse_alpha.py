@@ -274,6 +274,15 @@ def main(argv: list[str] | None = None) -> int:
         out_dir = Path("local_runs") / "figures"
         print("no --experiment given, writing to local_runs/figures/")
 
+    from src.config import run_banner
+
+    print(run_banner(
+        "probe_norse_alpha.py -- evidence that Norse's SuperSpike ignores alpha",
+        experiment=args.experiment,
+        output_dir=out_dir,
+        extra={"note": "library property, independent of any config or run"},
+    ))
+
     apply_rcparams()
     written = build_figure(out_dir)
 

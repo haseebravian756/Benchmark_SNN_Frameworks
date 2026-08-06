@@ -17,7 +17,7 @@ import torch
 
 from check_network import data_info_without_download
 from src.adapters import IMPLEMENTED, lif_factory
-from src.config import ConfigError, load_config, require
+from src.config import ConfigError, load_config, require, run_banner
 from src.metrics import (
     PowerSampler,
     detect_update_interval_ms,
@@ -39,7 +39,17 @@ from src.network import build_network
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="path to the experiment's YAML config. REQUIRED and with no default, so a run can never silently use another experiment's neuron: config/default.yaml is ex1 (forced-equivalent neuron), config/config_ex2.yaml is ex2 (each framework out of the box).",
+    )
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="LABEL ONLY, e.g. ex2. This script writes nothing; the label just "
+        "records in the output which experiment you were checking for.",
+    )
     parser.add_argument("--framework", default="snntorch",
                         help=f"implemented: {IMPLEMENTED}")
     parser.add_argument("--device", default=None, help="cuda | cpu")
@@ -55,8 +65,18 @@ def main() -> int:
 
     requested = args.device or ("cuda" if torch.cuda.is_available() else "cpu")
     device = torch.device(requested)
-    print(f"framework {args.framework}   device {device}   "
-          f"T={info.time_steps}  batch={args.batch}")
+    print(run_banner(
+        "check_metrics.py -- is each measurement sane in isolation?",
+        experiment=args.experiment,
+        config_path=args.config,
+        config=config,
+        framework=args.framework,
+        extra={"device": device, "T": info.time_steps, "batch": args.batch},
+        writes_results=False,
+    ))
+    print("NOTE: smoke-test settings, deliberately smaller than a real run "
+          f"({args.latency_samples} latency samples, {args.idle_seconds}s idle).")
+    print()
 
     net = build_network(lif_factory(args.framework, neuron_cfg), info, seed=0).to(device)
     batch = torch.rand(

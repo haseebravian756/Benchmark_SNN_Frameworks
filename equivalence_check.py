@@ -39,6 +39,7 @@ from src.config import (  # noqa: E402
     require_float,
     require_int,
     require_str,
+    run_banner,
 )
 
 # The order these appear in every table, plot legend and comparison.
@@ -279,14 +280,17 @@ def print_threshold_boundary(fires: dict[str, bool], thresholds: dict[str, float
 # ---------------------------------------------------------------------------
 
 
-def compare(
-    traces: dict[str, Trace],
-    max_v_deviation: float,
-    min_spike_time_match: float,
-) -> dict[str, Any]:
-    """Compare every pair of frameworks and decide PASS/FAIL.
+def compare(traces: dict[str, Trace]) -> dict[str, Any]:
+    """Measure how far the frameworks' traces are apart. No verdict.
 
-    Both membrane traces are checked. v_post alone would miss nothing in
+    This script reports numbers and draws plots; whether a given deviation matters
+    is a judgement about the experiment, not something a tolerance constant can
+    settle. Experiment 1 forced the neurons to agree, so ~1e-07 there means the
+    translation worked. Experiment 2 deliberately lets them differ, so a large
+    deviation there is the RESULT. One threshold cannot serve both, and a script
+    that printed FAIL for the expected outcome would train you to ignore it.
+
+    Both membrane traces are measured. v_post alone would miss nothing in
     practice, but reporting both makes it obvious whether a disagreement came
     from the charging arithmetic (v_pre) or from the reset (v_post).
     """
@@ -323,13 +327,11 @@ def compare(
             "peak_v_pre": trace.v_pre.max().item(),
         }
 
-    passed = worst_deviation <= max_v_deviation and worst_spike_match >= min_spike_time_match
     return {
         "per_framework": per_framework,
         "pairs": pairs,
         "worst_max_v_deviation": worst_deviation,
         "worst_spike_time_match": worst_spike_match,
-        "passed": passed,
     }
 
 
@@ -358,17 +360,34 @@ def print_report(test_name: str, result: dict[str, Any], tolerance: dict[str, fl
             f"spikes match = {pair['spike_time_match'] * 100:.1f}%"
         )
 
+    worst = result["worst_max_v_deviation"]
+    match = result["worst_spike_time_match"]
+    reference = tolerance["max_v_deviation"]
+    match_reference = tolerance["min_spike_time_match"]
+
     print()
-    print(
-        f"  worst max|dv|            {result['worst_max_v_deviation']:.3e}   "
-        f"(tolerance {tolerance['max_v_deviation']:.1e})"
-    )
-    print(
-        f"  worst spike time match   {result['worst_spike_time_match'] * 100:.1f}%   "
-        f"(required {tolerance['min_spike_time_match'] * 100:.1f}%)"
-    )
+    print("  MEASURED")
+    print(f"    worst max|dv|            {worst:.3e}")
+    print(f"    worst spike time match   {match * 100:.1f}%")
     print()
-    print(f"  RESULT: {'PASS' if result['passed'] else 'FAIL'}")
+    # The configured values are shown for orientation only -- references the reader
+    # compares against, not gates the script applies. See compare().
+    print("  YOUR CONFIG'S REFERENCE VALUES (for orientation, nothing is enforced)")
+    print(f"    equivalence.tolerance.max_v_deviation      {reference:.1e}")
+    print(f"    equivalence.tolerance.min_spike_time_match {match_reference * 100:.1f}%")
+    print()
+    if worst <= reference:
+        extra = "  float32 epsilon is 1.19e-07." if worst < 1e-6 else ""
+        print(f"  -> The traces agree to within your reference.{extra}")
+    else:
+        ratio = worst / reference if reference else float("inf")
+        print(f"  -> {ratio:,.0f}x your reference: the frameworks are computing "
+              f"different neurons here.")
+        print("     Whether that is a problem or the whole point depends on the")
+        print("     experiment. Read the plot and the divergence table below.")
+    if match < match_reference:
+        print(f"  -> Spike times also disagree ({match * 100:.1f}% vs your "
+              f"{match_reference * 100:.1f}% reference).")
 
 
 def print_divergence(
@@ -534,12 +553,11 @@ def save_plot(
     ax_raster.set_ylabel("spikes")
     ax_raster.grid(alpha=0.3, axis="x")
 
-    verdict = "PASS" if result["passed"] else "FAIL"
     spike_counts = "  ".join(
         f"{name}={result['per_framework'][name]['total_spikes']}" for name in FRAMEWORKS
     )
     figure.suptitle(
-        f"LIF equivalence  |  {test_name}  |  {verdict}  |  {run_timestamp}\n"
+        f"LIF membrane traces  |  {test_name}  |  {run_timestamp}\n"
         f"worst max|dv| = {result['worst_max_v_deviation']:.2e}    "
         f"spike times match = {result['worst_spike_time_match'] * 100:.1f}%    "
         f"total spikes: {spike_counts}",
@@ -565,8 +583,11 @@ def save_plot(
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/default.yaml",
-                        help="path to the YAML config (default: config/default.yaml)")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="path to the experiment's YAML config. REQUIRED and with no default, so a run can never silently use another experiment's neuron: config/default.yaml is ex1 (forced-equivalent neuron), config/config_ex2.yaml is ex2 (each framework out of the box).",
+    )
     parser.add_argument("--experiment", default=None,
                         help="experiment folder name, e.g. ex2. Omit for scratch "
                              "runs, which go flat into local_runs/")
@@ -578,6 +599,14 @@ def main() -> int:
     config = load_config(args.config)
     neuron_cfg = require(config, "neuron")
 
+    _, banner_output_dir, _ = output_dirs(args.experiment, args.results_root)
+    print(run_banner(
+        "equivalence_check.py -- do the neurons behave identically?",
+        experiment=args.experiment,
+        config_path=args.config,
+        config=config,
+        output_dir=banner_output_dir,
+    ))
     versions = framework_versions()
     print("versions:", ", ".join(f"{k} {v}" for k, v in versions.items()))
     print(f"config:   {Path(args.config).resolve()}")
@@ -624,7 +653,7 @@ def main() -> int:
         "plot_membrane": membrane_view,
         "tests": {},
     }
-    all_passed = True
+    worst_overall = 0.0
 
     # No gradients needed: this compares forward dynamics only.
     with torch.no_grad():
@@ -637,10 +666,13 @@ def main() -> int:
             current = make_input(spec, steps)
 
             traces = {name: RUNNERS[name](neuron_cfg, current) for name in FRAMEWORKS}
-            result = compare(traces, **tolerance)
+            result = compare(traces)
 
             print_report(test_name, result, tolerance)
-            if not result["passed"]:
+            # The divergence table is printed whenever there is something to see.
+            # This is a display decision, not a verdict: with traces agreeing to
+            # float32 epsilon the table would be nine identical columns.
+            if result["worst_max_v_deviation"] > tolerance["max_v_deviation"]:
                 print_divergence(current, traces, tolerance["max_v_deviation"])
 
             plot_path = output_dir / f"equivalence_{test_name}_{run_timestamp}.png"
@@ -653,18 +685,24 @@ def main() -> int:
             print(f"  plot:   {plot_path}")
 
             summary["tests"][test_name] = {"input": spec, **result}
-            all_passed = all_passed and result["passed"]
+            worst_overall = max(worst_overall, result["worst_max_v_deviation"])
 
-    summary["passed"] = all_passed
+    # The measured numbers, and the reference they were shown against. No verdict:
+    # anything reading this JSON decides for itself what the deviation means.
+    summary["worst_max_v_deviation"] = worst_overall
+    summary["reference_max_v_deviation"] = tolerance["max_v_deviation"]
     summary_path = output_dir / f"equivalence_summary_{run_timestamp}.json"
     summary_path.parent.mkdir(parents=True, exist_ok=True)
     summary_path.write_text(json.dumps(summary, indent=2), encoding="utf-8")
 
     print()
     print("=" * 68)
-    print(f"OVERALL: {'PASS' if all_passed else 'FAIL'}   (summary written to {summary_path})")
+    print(f"worst max|dv| across all tests: {worst_overall:.3e}")
+    print(f"plots and summary written to {output_dir}")
+    print("No pass/fail is issued -- read the plots and decide. Experiment 1 expects")
+    print("agreement to ~1e-07; Experiment 2 expects the frameworks to differ.")
     print("=" * 68)
-    return 0 if all_passed else 1
+    return 0
 
 
 if __name__ == "__main__":

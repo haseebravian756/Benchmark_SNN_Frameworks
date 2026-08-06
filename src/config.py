@@ -187,6 +187,61 @@ def output_dirs(
     return base / "results", base / "equivalence", False
 
 
+def run_banner(
+    script: str,
+    *,
+    experiment: str | None = None,
+    config_path: str | Path | None = None,
+    config: dict[str, Any] | None = None,
+    framework: str | None = None,
+    output_dir: str | Path | None = None,
+    extra: dict[str, Any] | None = None,
+    writes_results: bool = True,
+) -> str:
+    """The identity block every script prints before doing anything.
+
+    One shared formatter so all scripts announce the same facts the same way. The
+    point is that a scrolled-back terminal, or a pasted snippet in a lab notebook,
+    still says WHICH experiment and WHICH config produced what follows -- the two
+    things that decide whether a number means anything.
+
+    `experiment` is printed even when it is None, because "I forgot --experiment"
+    and "I meant scratch" look identical afterwards otherwise.
+
+    `writes_results=False` for the check scripts, which produce no files. For those
+    `--experiment` is a LABEL: it says which experiment you are checking for, and
+    changes nothing. Saying so in the banner stops the label being mistaken for an
+    output path.
+    """
+    lines = ["=" * 74, script]
+
+    def row(label: str, value: Any) -> None:
+        lines.append(f"  {label:<12}{value}")
+
+    if experiment:
+        row("experiment", experiment + ("" if writes_results else "   (label only)"))
+    elif writes_results:
+        row("experiment", "none (scratch -> local_runs/)")
+    else:
+        row("experiment", "not stated -- pass --experiment to label this check")
+    if config_path is not None:
+        digest = ""
+        if config is not None:
+            from src.results import config_hash  # local: avoids a circular import
+
+            digest = f"   hash {config_hash(config)}"
+        row("config", f"{config_path}{digest}")
+    if framework is not None:
+        row("framework", framework)
+    if output_dir is not None:
+        row("writing to", output_dir)
+    for label, value in (extra or {}).items():
+        row(label, value)
+
+    lines.append("=" * 74)
+    return "\n".join(lines)
+
+
 def ephemeral_storage_warning(results_root: Path) -> str | None:
     """On Colab, is this path about to be deleted when the session ends?
 

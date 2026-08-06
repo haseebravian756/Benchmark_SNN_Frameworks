@@ -24,13 +24,23 @@ import sys
 
 import torch
 
-from src.config import ConfigError, load_config, require
+from src.config import ConfigError, load_config, require, run_banner
 from src.data import build_loader, build_split, prebuild_cache
 
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="path to the experiment's YAML config. REQUIRED and with no default, so a run can never silently use another experiment's neuron: config/default.yaml is ex1 (forced-equivalent neuron), config/config_ex2.yaml is ex2 (each framework out of the box).",
+    )
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="LABEL ONLY, e.g. ex2. The cache is shared by dataset settings, not "
+        "by experiment; the label just records what you were preparing for.",
+    )
     parser.add_argument(
         "--splits", nargs="+", choices=["train", "test"], default=["train", "test"],
         help="which splits to prepare (each is always the COMPLETE split)",
@@ -44,6 +54,18 @@ def main() -> int:
     config = load_config(args.config)
     dataset_cfg = require(config, "dataset")
 
+    print(run_banner(
+        "prepare_data.py -- build the dataset cache",
+        experiment=args.experiment,
+        config_path=args.config,
+        config=config,
+        writes_results=False,
+    ))
+    print("The cache is keyed by the DATASET settings only, so any two experiments")
+    print("with identical dataset blocks share it -- exactly what you want, since")
+    print("they are meant to see byte-identical data. Changing a dataset setting")
+    print("builds a separate cache rather than overwriting the old one.")
+    print()
     print(f"tonic dataset: {dataset_cfg['name']}")
     print(f"framing mode:  {dataset_cfg['framing']['mode']}")
     print(f"denoise:       {dataset_cfg['denoise_filter_time_us']} us")

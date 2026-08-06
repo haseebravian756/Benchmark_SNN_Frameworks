@@ -337,15 +337,25 @@ equivalence:
       amplitude: 0.6
       seed: 0
 
-  # PASS/FAIL thresholds.
+  # REFERENCE VALUES, not pass/fail thresholds.
+  #
+  # equivalence_check.py issues NO verdict and always exits 0. It measures the
+  # deviations, prints them, and draws the plots; deciding what a deviation means
+  # is yours, because one threshold cannot serve both experiments -- ex1 forces the
+  # neurons to agree (so ~1e-07 means the translation worked), while ex2
+  # deliberately lets them differ (so a large deviation IS the result).
+  #
+  # These two are printed next to the measured numbers so you have something to
+  # judge against at a glance, and they decide whether the detailed
+  # first-divergence table is worth printing. Nothing is enforced.
   tolerance:
-    # Largest allowed difference between any two membrane traces at any
-    # timestep. 1e-4 is loose enough for float32 noise, tight enough that a
-    # real mistranslation cannot slip through.
+    # A useful yardstick for "agreeing as closely as float32 allows". 1e-4 is
+    # loose enough for float32 noise, tight enough that a real mistranslation
+    # shows up against it.
     max_v_deviation: 1.0e-4
 
-    # Fraction of timesteps whose spike/no-spike decision must agree across
-    # all three. 1.0 = require a perfect match.
+    # Fraction of timesteps whose spike/no-spike decision agree across all three.
+    # 1.0 = a perfect match is what you would expect when the neurons match.
     min_spike_time_match: 1.0
 
   # Output location comes from the `experiment` block at the top of this file.

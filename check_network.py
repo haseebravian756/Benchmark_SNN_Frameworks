@@ -29,6 +29,7 @@ from src.config import (
     require_bool,
     require_optional_int,
     require_str,
+    run_banner,
 )
 from src.data import DATASETS, DataInfo, build_framing
 from src.network import SpikingNet, build_network
@@ -113,6 +114,11 @@ def summarise_framework(
         "output_shape": tuple(output.shape),
         "neuron": type(net.lif_layers()[0]).__name__,
         "surrogate": net.lif_layers()[0].describe().get("surrogate", "?"),
+        # The FULL neuron settings, so the reader can confirm the experiment really
+        # got the neuron it intended. All LIF layers in a network share one config,
+        # so layer 0 speaks for all of them -- verified below before trusting that.
+        "describe": net.lif_layers()[0].describe(),
+        "layers_agree": len({str(l.describe()) for l in net.lif_layers()}) == 1,
         "state_after_forward": any(state_before),
         "state_after_reset": any(state_after),
     }
@@ -139,11 +145,20 @@ def compare_all(neuron_cfg: dict, info: DataInfo, seed: int, batch: int) -> int:
               f"{row['flatten']:>9}{str(row['output_shape']):>12}{reset_ok:>10}")
 
     print()
-    print("neuron and surrogate (these are SUPPOSED to differ):")
-    for row in rows:
-        print(f"  {row['framework']:<14}{row['neuron']:<18}{row['surrogate']}")
-
+    print("=" * 78)
+    print("NEURON ACTUALLY BUILT, per framework")
+    print("=" * 78)
+    print("These are SUPPOSED to differ between frameworks -- but they must be the")
+    print("values THIS experiment's config asked for. Read them against the config.")
     print()
+    for row in rows:
+        print(f"  {row['framework']}  ({row['neuron']})")
+        for key, value in row["describe"].items():
+            print(f"      {key:<22}{value}")
+        if not row["layers_agree"]:
+            print("      !! this framework's LIF layers do NOT all share one config")
+        print()
+
     print("=" * 78)
     checks = [
         ("weight fingerprints identical", len({r["fingerprint"] for r in rows}) == 1),
@@ -152,6 +167,11 @@ def compare_all(neuron_cfg: dict, info: DataInfo, seed: int, batch: int) -> int:
         ("output shapes identical", len({r["output_shape"] for r in rows}) == 1),
         ("reset clears state everywhere",
          all(r["state_after_forward"] and not r["state_after_reset"] for r in rows)),
+        # Every LIF layer within one framework must carry the same settings. A
+        # mismatch would mean the config was applied per-layer inconsistently, which
+        # no amount of cross-framework agreement would reveal.
+        ("each framework's LIF layers all share one config",
+         all(r["layers_agree"] for r in rows)),
     ]
     for name, ok in checks:
         print(f"  {'PASS' if ok else 'FAIL'}  {name}")
@@ -167,9 +187,19 @@ def compare_all(neuron_cfg: dict, info: DataInfo, seed: int, batch: int) -> int:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="path to the experiment's YAML config. REQUIRED and with no default, so a run can never silently use another experiment's neuron: config/default.yaml is ex1 (forced-equivalent neuron), config/config_ex2.yaml is ex2 (each framework out of the box).",
+    )
     parser.add_argument("--framework", default="snntorch",
                         help=f"implemented so far: {IMPLEMENTED}")
+    parser.add_argument(
+        "--experiment",
+        default=None,
+        help="LABEL ONLY, e.g. ex2. This script writes nothing; the label just "
+        "records in the output which experiment you were checking for.",
+    )
     parser.add_argument("--all", action="store_true",
                         help="build every framework and compare them side by side")
     parser.add_argument("--seed", type=int, default=0)
@@ -182,6 +212,17 @@ def main() -> int:
     neuron_cfg = require(config, "neuron")
 
     info = data_info_without_download(dataset_cfg)
+
+    print(run_banner(
+        "check_network.py -- is the network identical across frameworks?",
+        experiment=args.experiment,
+        config_path=args.config,
+        config=config,
+        framework="all three" if args.all else args.framework,
+        extra={"seed": args.seed},
+        writes_results=False,
+    ))
+    print()
 
     if args.all:
         print(f"data      : T={info.time_steps}  "

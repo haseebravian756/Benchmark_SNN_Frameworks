@@ -205,7 +205,11 @@ def collect_single_samples(loader, device, count: int) -> list[torch.Tensor]:
 
 def main() -> int:
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("--config", default="config/default.yaml")
+    parser.add_argument(
+        "--config",
+        required=True,
+        help="path to the experiment's YAML config. REQUIRED and with no default, so a run can never silently use another experiment's neuron: config/default.yaml is ex1 (forced-equivalent neuron), config/config_ex2.yaml is ex2 (each framework out of the box).",
+    )
     parser.add_argument("--framework", default="snntorch",
                         help=f"implemented: {IMPLEMENTED}")
     parser.add_argument("--device", default=None, help="override training.device")

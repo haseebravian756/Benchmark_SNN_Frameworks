@@ -21,6 +21,8 @@ import shutil
 import sys
 from pathlib import Path
 
+from src.config import run_banner
+
 CSV_FILES = ["runs.csv", "epochs.csv", "layers.csv"]
 
 
@@ -39,6 +41,61 @@ def row_key(row: dict[str, str], filename: str) -> tuple:
     if filename == "epochs.csv":
         return (row.get("run_id", ""), row.get("epoch", ""))
     return (row.get("run_id", ""), row.get("layer_index", ""))
+
+
+def _runs_csv(folder: Path) -> Path:
+    """Find runs.csv whether the folder is a Drive-style tree or a flat download."""
+    direct = folder / "results" / "runs.csv"
+    return direct if direct.is_file() else folder / "runs.csv"
+
+
+def guard_experiment_mismatch(
+    source: Path, target: Path, experiment: str, force: bool
+) -> None:
+    """Refuse to file one experiment's runs under another experiment's name.
+
+    The failure this prevents: `--from <folder>/ex2 --experiment ex1` appends ex2's
+    rows into ex1's runs.csv. Nothing else catches it. Row keys are run_ids, which
+    carry a timestamp but no experiment name, so the rows do not collide -- they
+    silently coexist, and every later mean, plot and conclusion is computed over a
+    mixture of two experiments.
+
+    The signal used is `config_path`. If the incoming rows and the existing rows
+    have NO config in common, they are different experiments. Overlap is treated as
+    fine, because one experiment legitimately spans several configs -- ex1 has runs
+    from both default.yaml and colab.yaml, and must stay mergeable.
+    """
+    incoming_header, incoming = read_rows(_runs_csv(source))
+    existing_header, existing = read_rows(_runs_csv(target))
+    if not incoming or not existing:
+        return  # nothing to compare against; the schema check covers the rest
+    if "config_path" not in (incoming_header or []) or "config_path" not in (existing_header or []):
+        return
+
+    incoming_configs = {r["config_path"] for r in incoming if r.get("config_path")}
+    existing_configs = {r["config_path"] for r in existing if r.get("config_path")}
+    if not incoming_configs or not existing_configs:
+        return
+    if incoming_configs & existing_configs:
+        return  # share at least one config -- same experiment
+
+    message = (
+        f"\nREFUSING TO MERGE: this looks like a different experiment.\n\n"
+        f"  target  experiments/{experiment}/  was produced by: "
+        f"{', '.join(sorted(existing_configs))}\n"
+        f"  incoming rows were produced by:              "
+        f"{', '.join(sorted(incoming_configs))}\n\n"
+        f"  No config in common, so these are almost certainly two different\n"
+        f"  experiments. Merging would file one under the other's name, and\n"
+        f"  nothing downstream would ever flag it.\n\n"
+        f"  If --experiment is wrong, fix it. If this really is the same\n"
+        f"  experiment run from a renamed config, re-run with --force."
+    )
+    if force:
+        print(message.replace("REFUSING TO MERGE", "WARNING (--force given)"))
+        print()
+        return
+    raise SystemExit(message)
 
 
 def merge_csv(source: Path, target: Path, dry_run: bool) -> str:
@@ -94,6 +151,11 @@ def main() -> int:
                         help="folder holding the Colab output (Drive folder, or a download)")
     parser.add_argument("--experiment", required=True,
                         help="target experiment folder name, e.g. ex1")
+    parser.add_argument(
+        "--force", action="store_true",
+        help="merge even when the incoming rows look like a different experiment. "
+        "Only when you are certain -- see the message it overrides.",
+    )
     parser.add_argument("--dry-run", action="store_true",
                         help="report what would happen, change nothing")
     args = parser.parse_args()
@@ -103,11 +165,16 @@ def main() -> int:
         raise SystemExit(f"source folder not found: {source.resolve()}")
 
     target = Path("experiments") / args.experiment
-    print(f"from : {source.resolve()}")
-    print(f"to   : {target.resolve()}")
-    if args.dry_run:
-        print("DRY RUN - nothing will be written")
+    print(run_banner(
+        "collect_results.py -- merge Colab output into an experiment folder",
+        experiment=args.experiment,
+        output_dir=target.resolve(),
+        extra={"reading": source.resolve(),
+               "mode": "DRY RUN (nothing written)" if args.dry_run else "merging"},
+    ))
     print()
+
+    guard_experiment_mismatch(source, target, args.experiment, args.force)
 
     # The Colab side may be laid out as <src>/results/... or flat, depending on
     # whether it came from Drive or a manual download. Accept both.
