@@ -138,12 +138,73 @@ and what is missing.
 
 ---
 
-## 5. Layout
+## 5. Draw the plots
+
+Once the results are home, one command draws every figure:
+
+```powershell
+.venv\Scripts\python make_plots.py --experiment ex1
+```
+
+Reads `experiments/ex1/results/{runs,epochs,layers}.csv`, writes 17 PNGs to
+`experiments/ex1/figures/`. No GPU, a couple of seconds.
+
+**Any other experiment — change one word:**
+
+```powershell
+.venv\Scripts\python make_plots.py --experiment ex2
+```
+
+Safe to re-run at any time. Figures are overwritten, never appended, so after a new
+seed arrives you just run it again and everything updates together.
+
+| flag | default | what it does |
+|---|---|---|
+| `--experiment exN` | — | which folder to read and write. **Usually the only flag you need.** |
+| `--results-root <path>` | `experiments` | where experiment folders live; change only on another machine |
+| `--results-dir <path>` | — | read CSVs from an explicit folder instead (scratch data, manual download) |
+| `--out-dir <path>` | `<experiment>/figures` | write figures elsewhere — good for a disposable preview |
+| `--condition <column>` | `framework` | which column goes on the x-axis; lets a later experiment compare variants or neuron types instead of frameworks |
+| `--formats png,pdf` | `png` | PNG is what the report embeds; add `pdf` only if you need vector art |
+
+```powershell
+# preview without touching the experiment folder
+.venv\Scripts\python make_plots.py --experiment ex1 --out-dir C:\Temp\figs
+
+# plot scratch runs that never got an experiment folder
+.venv\Scripts\python make_plots.py --results-dir local_runs --out-dir local_runs\figures
+```
+
+**Two messages that are normal, not errors:**
+
+- `skipped <name> — required columns absent` — that metric is not in this
+  experiment's CSVs. The other figures still get drawn.
+- `note: only one seed present` — the paired figures (F2) and every ±SD interval
+  need two or more seeds.
+
+If one figure fails it prints `FAILED` with the reason and the rest still get drawn.
+
+**Figures are never edited by hand.** Everything is regenerated from the CSVs, so
+any figure can be traced back to the rows that produced it. The design, the six
+figure families and the published sources behind each convention are in
+`local_docs/plotting_schema.md` — read §0 there for the full flag reference.
+
+---
+
+## 6. Layout
 
 ```
 experiments/ex1/          <- created by --experiment ex1
   report.md               the write-up
   equivalence/            equivalence figures + pass/fail JSON
+  figures/                <- created by make_plots.py --experiment ex1
+    F0.2_*.png            fairness evidence
+    F1.*.png              per-metric distributions
+    F2.*.png              paired within-seed views
+    F3.*.png              profile and trade-offs
+    F4.*.png              training dynamics
+    F5.*.png              per-layer structure
+    F6.*.png              measurement quality
   results/
     runs.csv              one row per (framework, seed)
     epochs.csv            one row per epoch
@@ -158,7 +219,7 @@ Output path = `<results-root>/<experiment>/{results,equivalence}`.
 
 ---
 
-## 6. Things that will bite you
+## 7. Things that will bite you
 
 | symptom | cause |
 |---|---|
@@ -170,7 +231,7 @@ Output path = `<results-root>/<experiment>/{results,equivalence}`.
 
 ---
 
-## 7. Local checks (no GPU needed)
+## 8. Local checks (no GPU needed)
 
 ```powershell
 .venv\Scripts\python check_network.py --all       # frameworks start from identical weights

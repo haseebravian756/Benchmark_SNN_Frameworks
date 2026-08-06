@@ -1,0 +1,190 @@
+# Experiment 2 -- each framework OUT OF THE BOX.
+#
+# Experiment 1 forced all three frameworks to compute ONE neuron, so that only the
+# implementation could differ. This config does the opposite: it uses each
+# framework's own default and its own documented event-data example, and lets the
+# three neurons be genuinely different.
+#
+#   python train.py --config config/config_ex2.yaml --experiment ex2 \
+#       --framework <fw> --seed <s> --results-root <drive>
+#
+# Design, equations and every source link: experiments/ex2/ex2_design.md
+#
+# ---------------------------------------------------------------------------
+# ONLY the neuron block is overridden. Everything else -- dataset, framing,
+# architecture, optimiser, learning rate, loss, timesteps, batch size, metrics --
+# is inherited from default.yaml, unchanged.
+#
+# WHY: the frameworks' own examples use entirely different recipes (different
+# datasets, batch 128 vs 16, lr 2e-2 vs 0.1, different losses, 1 vs 64 epochs).
+# Adopting all of that per framework would make every metric incomparable -- you
+# would be comparing training recipes, not frameworks. Holding everything except
+# the neuron fixed keeps every column of runs.csv meaning the same thing in every
+# row. See ex2_design.md section 5.
+#
+# NOTE FOR LATER: if ex2's results turn out to be the more authentic picture --
+# these being the values the frameworks themselves put forward -- the plan is to
+# promote them into default.yaml and make this the baseline. Until that decision
+# is made, default.yaml stays as the forced-equivalence config from ex1.
+# ---------------------------------------------------------------------------
+extends: default.yaml
+
+# ---------------------------------------------------------------------------
+# Each value below is labelled with where it comes from. Keeping these apart is
+# the main way this experiment could go wrong, so the labels are not decoration:
+#
+#   (D)  constructor default -- what you get from Neuron() with no arguments
+#   (E)  the framework's own EVENT-DATA example passes this explicitly
+#   (F)  forced by our shared pipeline, NOT out-of-the-box -- declared as a
+#        limitation in the report
+#
+# The sub-threshold neuron is one line:   v[t] = d * v[t-1] + g * x[t]
+# and two derived numbers describe it:
+#   tau      = -1 / ln(d)        how many timesteps it remembers
+#   DC gain  = g / (1 - d)       how excitable it is
+# ---------------------------------------------------------------------------
+neuron:
+
+  snntorch:
+    # snn.Leaky update (docs):  U[t+1] = beta*U[t] + I_in[t+1] - R*U_thr
+    # so d = beta, and g = 1 -- the input enters at FULL strength, decoupled from
+    # the decay. snnTorch is the only one of the three with a free gain.
+    #
+    # (E) beta has NO CONSTRUCTOR DEFAULT -- snnTorch requires it, so the library
+    #     ships no out-of-the-box time constant at all. 0.5 is the value its own
+    #     N-MNIST tutorial uses:
+    #     https://snntorch.readthedocs.io/en/latest/tutorials/tutorial_7.html
+    #
+    #     d = 0.5  ->  tau = 1.44 steps,  DC gain = 1/(1-0.5) = 2.0
+    #     That DC gain of 2.0 is TWICE the other two frameworks'. Measured
+    #     consequence: at a constant input of 0.6 against threshold 1.0, snnTorch
+    #     fires repeatedly while SpikingJelly and Norse never reach threshold.
+    beta: 0.5
+
+    # (D) https://snntorch.readthedocs.io/en/latest/snn.neurons_leaky.html
+    threshold: 1.0
+
+    # (D) DIFFERS FROM EX1, which forced "zero". "subtract" is a SOFT reset: it
+    #     takes the threshold off and keeps the remainder, so a strongly driven
+    #     neuron fires again sooner. A genuinely different neuron, not a detail.
+    reset_mechanism: subtract
+
+    # (D) DIFFERS FROM EX1, which forced false. True defers a spike's reset to the
+    #     FOLLOWING timestep. Verified behaviour: v[t+1] = beta*v[t] + I - S[t]*thr,
+    #     i.e. the subtraction arrives one step late. SpikingJelly and Norse both
+    #     reset immediately, so this is a real three-way divergence.
+    reset_delay: true
+
+    # (D)+(E) spike_grad=None resolves to atan() internally, whose own default
+    #         alpha is 2.0; Tutorial 7 also passes surrogate.atan() explicitly.
+    #         So default and recommended practice agree here -- the only parameter
+    #         in this file where all three of (D), (E) and ex1 coincide.
+    surrogate:
+      type: atan
+      alpha: 2.0
+
+  spikingjelly:
+    # LIFNode update (docs), decay_input=True:
+    #   H[t] = V[t-1] + (1/tau)*( X[t] - (V[t-1] - V_reset) )
+    # With V_reset=0 that is   d = 1 - 1/tau,  g = 1/tau.
+    # Unlike snnTorch, decay and gain are TIED by the flag: decay_input=True gives
+    # g = 1/tau, false gives g = 1. There is no free choice in between.
+    #
+    # (D)+(E) DIFFERS FROM EX1, which forced tau=10.0 to reach decay 0.9.
+    #         SpikingJelly's own DVS-Gesture example does not pass tau at all, so
+    #         the default stands. Independently corroborated by Fang et al.,
+    #         ICCV 2021, which uses init_tau 2.0 on DVS128 Gesture -- the same
+    #         group that wrote SpikingJelly.
+    #
+    #         d = 1 - 1/2 = 0.5  ->  tau_eff = 1.44 steps
+    #         Coincidentally IDENTICAL decay to snnTorch's 0.5 above. Nobody
+    #         coordinated this; 1 - 1/2 simply lands on the same number.
+    tau: 2.0
+
+    # (D)+(E) DIFFERS FROM EX1, which forced false to get gain 1.0.
+    #         True makes g = 1/tau = 0.5, hence DC gain = 0.5/(1-0.5) = 1.0.
+    decay_input: true
+
+    v_threshold: 1.0        # (D)
+    v_reset: 0.0            # (D) a number means HARD reset; null would mean soft
+
+    # (E) DIFFERS FROM EX1 (false) *and* from SpikingJelly's own constructor
+    #     default (also false). Its event example passes True.
+    #
+    #     This is one of TWO places where SpikingJelly's own recommended practice
+    #     contradicts its own defaults. We follow the example, because the
+    #     question this experiment asks is "what if you do what the framework
+    #     tells you to do for event data" -- and a shipped, documented example is
+    #     what it tells you. config/config_ex2_bare.yaml takes the other branch.
+    #
+    #     Not cosmetic: measured in ex1, flipping this changed d(spikes)/d(weight)
+    #     from 2.64 to 4.34 on a 6-step test.
+    detach_reset: true
+
+    # (F) FORCED, not out-of-the-box. Our shared network loops over timesteps and
+    #     hands each layer one frame, which is what 's' means. SpikingJelly's fused
+    #     CUDA kernel needs 'm' plus the whole [T,...] tensor. Verified in ex1 that
+    #     'm' and looped 's' produce IDENTICAL spikes, so this caps measured speed
+    #     without affecting correctness. Same limitation as ex1's L2, and the
+    #     reason a multi-step + cupy run is the planned follow-up.
+    step_mode: s
+    backend: torch
+
+    # (E) The second disagreement. Constructor default is Sigmoid(alpha=4.0); the
+    #     event example passes ATan(). Following the example.
+    surrogate:
+      type: atan
+      alpha: 2.0
+
+  norse:
+    # LIFBoxCell, one Euler step of  v_dot = (1/tau_mem)*(v_leak - v + i):
+    #   v[t] = (1 - dt*tau_mem_inv)*v[t-1] + (dt*tau_mem_inv)*x[t]
+    #
+    # So with a = dt*tau_mem_inv:  d = 1 - a  and  g = a.
+    # DECAY AND GAIN ARE LOCKED: g = 1 - d. Both come from the single product, so
+    # they cannot be set independently. Structural to the discretised ODE, not a
+    # missing feature -- and precisely why ex1 needed an external input_scale.
+    #
+    # (D) for both: https://norse.github.io/norse/generated/norse.torch.module.lif_box.LIFBoxCell.html
+    #     a = 0.001 * 100 = 0.1  ->  d = 0.9, g = 0.1
+    #     tau_eff = 9.49 steps -- about 6.6x LONGER memory than the other two,
+    #     and DC gain = 0.1/(1-0.9) = 1.0.
+    dt: 0.001
+    tau_mem_inv: 100.0
+
+    v_th: 1.0               # (D)
+    v_reset: 0.0            # (D)
+    v_leak: 0.0             # (D)
+    reset_method: value     # (D) HARD reset
+
+    # DIFFERS FROM EX1, which used 10.0 to cancel the locked gain and force an
+    # effective gain of 1.0. Out of the box there is no such factor, so 1.0 here
+    # means "no rescaling at all" -- the gain stays at its locked 0.1.
+    # Removing this scaffolding is the point of the experiment.
+    input_scale: 1.0
+
+    # (D) DIFFERS FROM EX1, which deliberately used circ(0.5) to approximate
+    #     atan(2.0) and avoid the bug below.
+    #
+    #     *** alpha HAS NO EFFECT in norse 1.1.0. ***
+    #     The installed backward is
+    #         grad_output / (|x| + 1)^2
+    #     with ctx.alpha stored and never read -- so alpha = 1, 10 and 100 give
+    #     byte-identical gradients and the surrogate always behaves as alpha = 1.
+    #     Upstream main has the fix:
+    #         grad_output / (alpha*|x| + 1)^2
+    #     merged as commit 1d2671a (Aug 2024) but NEVER RELEASED; 1.1.0 is still
+    #     current on PyPI.
+    #
+    #     Ex1 avoided this. Ex2 must NOT avoid it: a user following the defaults
+    #     gets the buggy surrogate, so this is the honest out-of-the-box
+    #     condition, and the bug becomes a measured result rather than a footnote.
+    #     Consequence measured in ex1: effective alpha=1 gave a conv1 gradient
+    #     norm 6.03x the other two frameworks', so at a shared learning rate
+    #     Norse effectively trains at ~6x the step size.
+    #
+    #     Evidence figure: python probe_norse_alpha.py --experiment ex2
+    #     Full write-up:   local_docs/norse_superspike_alpha_finding.md
+    surrogate:
+      type: super
+      alpha: 100.0

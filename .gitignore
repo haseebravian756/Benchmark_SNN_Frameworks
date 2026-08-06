@@ -9,9 +9,7 @@ __pycache__/
 data/
 cache/
 
-# Scratch output. Leading slash = ROOT ONLY, so that experiments/exN/results/
-# is NOT caught by this and stays tracked — those CSVs are the actual
-# scientific output and belong in version control.
+
 /results/
 /local_runs/
 /local_docs/
