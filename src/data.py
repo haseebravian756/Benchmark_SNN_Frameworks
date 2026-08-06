@@ -19,6 +19,14 @@ multi-gigabyte cache rebuild.
 Batches come out shaped [T, batch, channels, height, width] -- time first,
 because the training loop walks the timesteps and feeds one frame of the whole
 batch to the network at a time.
+
+A cache is identified by its `manifest.json`, not by its path: `check_manifest`
+refuses to read a directory that was built with different settings, so the only
+way to reuse a cache is for every setting that shaped it to match. That one rule
+is also what makes the cache portable -- `src/cache_archive.py` can park a built
+cache on Google Drive and unpack it in a later Colab session precisely because
+"is this the cache I asked for?" has a definite answer. See `split_identity`,
+which both this module and the archiver read so the rule has one home.
 """
 
 from __future__ import annotations
@@ -33,6 +41,7 @@ import torch
 import tonic
 from torch.utils.data import DataLoader
 
+from src.cache_archive import archive_stem, restore as restore_archive
 from src.config import (
     ConfigError,
     require_bool,
@@ -233,13 +242,34 @@ def collate_time_first(batch: list[tuple[np.ndarray, int]]):
     return frames.movedim(1, 0).float(), labels
 
 
-def build_split(
-    dataset_cfg: dict[str, Any],
-    train: bool,
-) -> tuple[Any, DataInfo]:
-    """Build one cached split (train or test) and describe it.
+class SplitIdentity(NamedTuple):
+    """Everything that decides WHICH cache a (config, split) pair refers to.
 
-    Returns the dataset ready for a DataLoader, plus the DataInfo describing it.
+    Split out of `build_split` so that the archiving in `src/cache_archive.py`
+    cannot drift from the local cache's own notion of identity: both read this,
+    and there is no second copy of the rule.
+    """
+
+    dataset_name: str
+    split_name: str
+    dataset_class: Any
+    dataset_options: dict[str, Any]
+    num_classes: int
+    to_frame: Any
+    time_steps: int
+    framing: dict[str, Any]
+    denoise_filter_time_us: int | None
+    cache_root: Path
+    cache_dir: Path
+    manifest: dict[str, Any]
+    archive_stem: str
+
+
+def split_identity(dataset_cfg: dict[str, Any], train: bool) -> SplitIdentity:
+    """Resolve a config + split to its cache location and manifest.
+
+    Reads the config only. Touches no disk, downloads nothing, and constructs no
+    dataset -- so it is cheap enough to call just to ask "where would this live?"
     """
     name = require_str(dataset_cfg, "name")
     if name not in DATASETS:
@@ -257,16 +287,64 @@ def build_split(
     }
 
     to_frame, time_steps, framing = build_framing(dataset_cfg, sensor_size)
+    denoise_us = require_optional_int(dataset_cfg, "denoise_filter_time_us")
+
+    cache_identity = {**dataset_options, "denoise_filter_time_us": denoise_us}
+    key = cache_key(framing, cache_identity)
+    split_name = "train" if train else "test"
+    cache_root = Path(require_str(dataset_cfg, "cache_dir")) / name / key
+
+    return SplitIdentity(
+        dataset_name=name,
+        split_name=split_name,
+        dataset_class=dataset_class,
+        dataset_options=dataset_options,
+        num_classes=entry["num_classes"],
+        to_frame=to_frame,
+        time_steps=time_steps,
+        framing=framing,
+        denoise_filter_time_us=denoise_us,
+        cache_root=cache_root,
+        cache_dir=cache_root / split_name,
+        manifest={"dataset": name, "split": split_name, "framing": framing,
+                  "dataset_options": dataset_options,
+                  "denoise_filter_time_us": denoise_us,
+                  "tonic": tonic.__version__},
+        archive_stem=archive_stem(name, key, split_name),
+    )
+
+
+def build_split(
+    dataset_cfg: dict[str, Any],
+    train: bool,
+    cache_archive: Path | None = None,
+) -> tuple[Any, DataInfo]:
+    """Build one cached split (train or test) and describe it.
+
+    Returns the dataset ready for a DataLoader, plus the DataInfo describing it.
+
+    `cache_archive` is optional and defaults to off, so omitting it reproduces
+    the original behaviour exactly. When given, and only when no local cache is
+    already present, a matching archive under that folder is unpacked instead of
+    the cache being rebuilt -- see `src/cache_archive.py`. The unpacked manifest
+    still goes through `check_manifest` below like any other, so the archive is a
+    shortcut to the same bytes and never a way around the check.
+    """
+    identity = split_identity(dataset_cfg, train)
+    split_name = identity.split_name
+    cache_dir = identity.cache_dir
+    manifest = identity.manifest
 
     # Denoise works on raw events, so it must run BEFORE framing. It is
     # expensive and it changes which events exist, so it is cached and it is
     # part of the cache identity.
-    denoise_us = require_optional_int(dataset_cfg, "denoise_filter_time_us")
     stages: list[Callable] = []
-    if denoise_us is not None:
-        stages.append(tonic.transforms.Denoise(filter_time=denoise_us))
-    stages.append(to_frame)
-    stages.append(PadOrCropFrames(time_steps))
+    if identity.denoise_filter_time_us is not None:
+        stages.append(
+            tonic.transforms.Denoise(filter_time=identity.denoise_filter_time_us)
+        )
+    stages.append(identity.to_frame)
+    stages.append(PadOrCropFrames(identity.time_steps))
     cached_transform = tonic.transforms.Compose(stages)
 
     # Binarize works on frames and is a single elementwise clamp, so it runs
@@ -275,28 +353,24 @@ def build_split(
     binarize = require_bool(dataset_cfg, "binarize")
     post_cache_transform = ClampToBinary() if binarize else None
 
-    cache_identity = {**dataset_options, "denoise_filter_time_us": denoise_us}
-    split_name = "train" if train else "test"
-    cache_root = Path(require_str(dataset_cfg, "cache_dir")) / name / cache_key(
-        framing, cache_identity
-    )
-    cache_dir = cache_root / split_name
-
-    manifest = {"dataset": name, "split": split_name, "framing": framing,
-                "dataset_options": dataset_options,
-                "denoise_filter_time_us": denoise_us,
-                "tonic": tonic.__version__}
     existed = check_manifest(cache_dir, manifest)
+
+    # Only reached when there is nothing usable locally. Restoring is pure
+    # shortcut: if it fails for any reason it says so and the normal build runs.
+    if not existed and cache_archive is not None:
+        if restore_archive(cache_archive, identity.archive_stem, cache_dir, manifest):
+            existed = check_manifest(cache_dir, manifest)
+
     print(
         f"  {split_name:<5} cache {cache_dir}  "
         f"{'REUSING (already built)' if existed else 'will be built on first pass'}"
     )
 
-    raw = dataset_class(
+    raw = identity.dataset_class(
         save_to=require_str(dataset_cfg, "root"),
         train=train,
         transform=cached_transform,
-        **dataset_options,
+        **identity.dataset_options,
     )
     cached = tonic.DiskCachedDataset(
         raw,
@@ -311,17 +385,17 @@ def build_split(
     write_manifest(cache_dir, manifest)
 
     # x,y,p from Tonic; ToFrame emits [T, polarity, y, x], hence C,H,W below.
-    width, height, channels = sensor_size
+    width, height, channels = identity.dataset_class.sensor_size
     info = DataInfo(
-        name=name,
-        time_steps=time_steps,
+        name=identity.dataset_name,
+        time_steps=identity.time_steps,
         channels=channels,
         height=height,
         width=width,
-        num_classes=entry["num_classes"],
-        cache_root=cache_root,
-        framing=framing,
-        denoise_filter_time_us=denoise_us,
+        num_classes=identity.num_classes,
+        cache_root=identity.cache_root,
+        framing=identity.framing,
+        denoise_filter_time_us=identity.denoise_filter_time_us,
         binarize=binarize,
     )
     return cached, info

@@ -54,6 +54,8 @@ $EXP = "ex2"                         # ex1: ex1
 .venv\Scripts\python check_metrics.py --config $CFG --experiment $EXP
 
 # ── 5. build the dataset cache BEFORE anything is timed
+#      on Colab add --cache-archive <drive folder> so a reconnect does not
+#      rebuild it from scratch every session (see §3)
 .venv\Scripts\python prepare_data.py --config $CFG --experiment $EXP
 
 # ── 6. the actual runs — 3 frameworks x 3 seeds  (GPU; on Colab, see §3)
@@ -171,6 +173,7 @@ experiment produced it.
 | `--max-eval-batches <int>` | all | same, for evaluation |
 | `--no-energy` | off | skip NVML (also skipped automatically if unavailable) |
 | `--allow-ephemeral` | off | permit writing outside Drive on Colab. **Overrides a deliberate safety block** |
+| `--cache-archive <dir>` | off | **restore only** — unpacks an archived cache if none is local. Never writes one; `prepare_data.py` does that |
 | `--notes "<text>"` | `""` | free text stored with the run |
 
 **The check scripts:**
@@ -191,6 +194,8 @@ experiment produced it.
 | `prepare_data.py` | `--experiment <exN>` | none | **label only** — the cache is keyed by dataset settings, not experiment |
 | | `--splits train test` | `train test` | which splits to build |
 | | `--no-prebuild` | off | fetch one batch instead of writing the whole cache |
+| | `--cache-archive <dir>` | off | a folder that outlives the machine (Drive). Restores a matching archive instead of rebuilding; stores a newly built one. Omit = original behaviour |
+| | `--cache-archive-compress` | off | gzip the archive — smaller and quicker to upload, more CPU both ends |
 
 **Analysis:**
 
@@ -356,6 +361,7 @@ three lines and the whole cell runs a different experiment:
 
 ```python
 DRIVE = "/content/drive/MyDrive/snn_results"
+CACHE = "/content/drive/MyDrive/snn_cache"   # survives the disconnect. see below
 
 # ─── the ONLY lines that change per experiment ───
 CFG = "config/default.yaml"        # ex1  │  ex2: config/config_ex2.yaml
@@ -367,7 +373,7 @@ SEEDS = "0 1 2"
 !python check_network.py --config {CFG} --all               # expect OVERALL: PASS
 !python equivalence_check.py --config {CFG} --experiment {EXP} --results-root {DRIVE}
 
-!python prepare_data.py --config {CFG}                      # ← ALWAYS. see below
+!python prepare_data.py --config {CFG} --cache-archive {CACHE}   # ← ALWAYS. see below
 
 !for s in {SEEDS}; do for fw in snntorch spikingjelly norse; do \
     python train.py --config {CFG} --experiment {EXP} \
@@ -419,6 +425,56 @@ Colab wipes `/content` between sessions, so **re-run it after every reconnect**:
 ```python
 !du -sh cache/ 2>/dev/null || echo "CACHE MISSING - run prepare_data.py"
 ```
+
+### `--cache-archive` — build the cache once instead of once per session
+
+Re-running `prepare_data.py` after a reconnect is correct but slow: N-MNIST is
+~20 minutes of pure format conversion, paid again every time Colab drops you.
+`--cache-archive` points at a folder that **outlives the runtime** — a mounted
+Drive — and turns that into a one-off:
+
+```python
+CACHE = "/content/drive/MyDrive/snn_cache"
+
+!python prepare_data.py --config {CFG} --cache-archive {CACHE}
+```
+
+**Run the identical line every session.** It stores when the cache is new and
+restores when a matching archive is already there; you never pick.
+
+| session | what the line does | roughly |
+|---|---|---|
+| first | builds the cache, packs it into `{CACHE}` | 20 min + one upload |
+| every one after | unpacks it back onto local disk | 1–2 min |
+
+**"Matching" is decided by the manifest, not the filename.** An archive is used
+only when every dataset setting that shaped it — framing, T, denoise, dataset
+options, Tonic version — is equal to what the config now asks for. It is the same
+test the local cache already applies, so changing a dataset setting builds a new
+cache and a new archive rather than silently restoring the wrong data. There is no
+way to force a mismatched restore, on purpose.
+
+What it will not do:
+
+- **Overwrite a cache you already have.** A local cache always wins; the archive
+  is only consulted when there is nothing there.
+- **Store a half-built cache.** With `--no-prebuild`, or after an interrupted run,
+  it counts the samples, finds fewer than the split holds, and refuses. An
+  incomplete archive would be restored happily forever and you would train on a
+  subset without ever being told.
+- **Fail your session.** Drive unmounted, folder missing, tar corrupt, upload
+  interrupted — each prints one line and falls back to building normally.
+
+`train.py` takes `--cache-archive` too, but **restore only** — useful when a
+session drops mid-sweep and you want to go straight back to training. Only
+`prepare_data.py` ever writes an archive.
+
+Add `--cache-archive-compress` to gzip it: smaller on Drive and quicker to upload,
+at the cost of CPU on both ends. Colab typically has ~2 cores, so it is a genuine
+trade rather than a free win. Either kind restores.
+
+Omit the flag entirely and nothing is read or written — the original behaviour,
+unchanged.
 
 ---
 

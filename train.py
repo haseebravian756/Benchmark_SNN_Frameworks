@@ -228,6 +228,12 @@ def main() -> int:
                              "/content/drive/MyDrive/snn_results")
     parser.add_argument("--allow-ephemeral", action="store_true",
                         help="permit writing results to Colab's temporary disk")
+    parser.add_argument("--cache-archive", default=None, metavar="DIR",
+                        help="folder holding archived dataset caches, normally on "
+                             "Drive. RESTORE ONLY here: if no local cache exists a "
+                             "matching archive is unpacked, but training never "
+                             "writes one -- prepare_data.py does that. Omit for the "
+                             "original behaviour.")
     parser.add_argument("--notes", default="", help="free text stored with the run")
     args = parser.parse_args()
 
@@ -263,8 +269,11 @@ def main() -> int:
 
     # ---- region 0: data, model, NVML probe --------------------------------
     print("\n[0] setup")
-    train_set, info = build_split(dataset_cfg, train=True)
-    test_set, _ = build_split(dataset_cfg, train=False)
+    cache_archive_root = Path(args.cache_archive) if args.cache_archive else None
+    train_set, info = build_split(dataset_cfg, train=True,
+                                  cache_archive=cache_archive_root)
+    test_set, _ = build_split(dataset_cfg, train=False,
+                              cache_archive=cache_archive_root)
     train_loader = build_loader(train_set, dataset_cfg,
                                 shuffle=require_bool(dataset_cfg, "shuffle_train"),
                                 seed=seed)

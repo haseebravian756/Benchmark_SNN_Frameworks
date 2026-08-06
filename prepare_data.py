@@ -15,17 +15,36 @@ absorb that entire one-time cost and look slow for no reason.
     python prepare_data.py --config config/default.yaml --splits test --no-prebuild
 
 There is no option to use a subset of a split. Splits are always complete.
+
+ON COLAB, add --cache-archive. Colab wipes the local disk on every disconnect, so
+without it the cache is rebuilt from scratch each session. With it, the built
+cache is packed onto Drive once and unpacked in every later session:
+
+    # first session: builds the cache, then parks it on Drive
+    python prepare_data.py --config config/config_ex2.yaml \
+        --cache-archive "/content/drive/MyDrive/snn_cache"
+
+    # every session after that: same command, unpacks instead of rebuilding
+    python prepare_data.py --config config/config_ex2.yaml \
+        --cache-archive "/content/drive/MyDrive/snn_cache"
+
+The same command both times -- it stores when the cache is new and restores when
+a matching archive is already there. "Matching" means the archive's manifest is
+equal to the one this config asks for, the same test the local cache already
+uses, so a changed dataset setting can never restore the wrong data.
 """
 
 from __future__ import annotations
 
 import argparse
 import sys
+from pathlib import Path
 
 import torch
 
+from src import cache_archive
 from src.config import ConfigError, load_config, require, run_banner
-from src.data import build_loader, build_split, prebuild_cache
+from src.data import build_loader, build_split, prebuild_cache, split_identity
 
 
 def main() -> int:
@@ -49,7 +68,22 @@ def main() -> int:
         "--no-prebuild", action="store_true",
         help="skip writing the full cache; just fetch one batch and report shapes",
     )
+    parser.add_argument(
+        "--cache-archive", default=None, metavar="DIR",
+        help="a folder that OUTLIVES this machine, normally a mounted Google "
+        "Drive. A matching archive there is unpacked instead of rebuilding the "
+        "cache; a newly built cache is packed into it. Omit for the original "
+        "behaviour -- nothing is read or written.",
+    )
+    parser.add_argument(
+        "--cache-archive-compress", action="store_true",
+        help="gzip the archive. Smaller on Drive and quicker to upload, at the "
+        "cost of CPU on both ends. Colab typically has ~2 cores, so this is a "
+        "real trade rather than a free win. Either kind restores.",
+    )
     args = parser.parse_args()
+
+    archive_root = Path(args.cache_archive) if args.cache_archive else None
 
     config = load_config(args.config)
     dataset_cfg = require(config, "dataset")
@@ -70,17 +104,38 @@ def main() -> int:
     print(f"framing mode:  {dataset_cfg['framing']['mode']}")
     print(f"denoise:       {dataset_cfg['denoise_filter_time_us']} us")
     print(f"binarize:      {dataset_cfg['binarize']}")
+    if archive_root is not None:
+        print(f"cache archive: {archive_root}"
+              f"{'  (gzip)' if args.cache_archive_compress else ''}")
+        if args.no_prebuild:
+            print("               NOTE: --no-prebuild never completes the cache, so")
+            print("               nothing will be stored. Restoring still works.")
     print()
 
     info = None
     for split in args.splits:
         is_train = split == "train"
         print(f"[{split}]")
-        dataset, info = build_split(dataset_cfg, train=is_train)
+        dataset, info = build_split(
+            dataset_cfg, train=is_train, cache_archive=archive_root
+        )
         print(f"  samples: {len(dataset)}")
 
         if not args.no_prebuild:
             prebuild_cache(dataset, split)
+
+            # After prebuild and not before: `store` refuses a partial cache, so
+            # archiving here is the only point where the split is known complete.
+            if archive_root is not None:
+                identity = split_identity(dataset_cfg, train=is_train)
+                cache_archive.store(
+                    archive_root,
+                    identity.archive_stem,
+                    identity.cache_dir,
+                    identity.manifest,
+                    expected_samples=len(dataset),
+                    compress=args.cache_archive_compress,
+                )
 
         # One real batch, to confirm the shape rather than assume it. The doc
         # asks for exactly this check before anything gets built on top.
