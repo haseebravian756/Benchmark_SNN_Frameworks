@@ -13,8 +13,6 @@ cache/
 /results/
 /local_runs/
 /local_docs/
-/experiments/
-/experiments/ex*/
 
 # Landing zones for files pulled off Colab before collect_results.py files them
 # (temp_colab, temp_colab_1, temp_colab_seed2, ...)

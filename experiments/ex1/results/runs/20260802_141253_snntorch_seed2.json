@@ -1,0 +1,263 @@
+{
+  "run_id": "20260802_141253_snntorch_seed2",
+  "config": {
+    "dataset": {
+      "name": "nmnist",
+      "root": "data",
+      "cache_dir": "cache",
+      "first_saccade_only": false,
+      "stabilize": false,
+      "denoise_filter_time_us": 10000,
+      "binarize": false,
+      "framing": {
+        "mode": "n_time_bins",
+        "n_time_bins": 20,
+        "time_window_us": 15000,
+        "frames": 20
+      },
+      "batch_size": 128,
+      "num_workers": 2,
+      "shuffle_train": true,
+      "shuffle_test": false,
+      "cache_compress": false
+    },
+    "neuron": {
+      "snntorch": {
+        "beta": 0.9,
+        "threshold": 1.0,
+        "reset_mechanism": "zero",
+        "reset_delay": false,
+        "surrogate": {
+          "type": "atan",
+          "alpha": 2.0
+        }
+      },
+      "spikingjelly": {
+        "tau": 10.0,
+        "decay_input": false,
+        "v_threshold": 1.0,
+        "v_reset": 0.0,
+        "detach_reset": false,
+        "step_mode": "s",
+        "backend": "torch",
+        "surrogate": {
+          "type": "atan",
+          "alpha": 2.0
+        }
+      },
+      "norse": {
+        "dt": 0.001,
+        "tau_mem_inv": 100.0,
+        "v_th": 1.0,
+        "v_reset": 0.0,
+        "v_leak": 0.0,
+        "reset_method": "value",
+        "input_scale": 10.0,
+        "surrogate": {
+          "type": "circ",
+          "alpha": 0.5
+        }
+      }
+    },
+    "training": {
+      "device": "cuda",
+      "seed": 0,
+      "epochs": 5,
+      "optimizer": {
+        "type": "nadam",
+        "lr": 0.002
+      },
+      "loss": "cross_entropy"
+    },
+    "metrics": {
+      "warmup_iterations": 5,
+      "idle_seconds": 20,
+      "latency_samples": 100,
+      "spike_batches": 20,
+      "measure_energy": true
+    },
+    "equivalence": {
+      "device": "cpu",
+      "steps": 100,
+      "plot_membrane": "pre_reset",
+      "inputs": [
+        {
+          "name": "constant_step",
+          "onset": 10,
+          "amplitude": 0.15
+        },
+        {
+          "name": "poisson",
+          "rate": 0.15,
+          "amplitude": 0.6,
+          "seed": 0
+        }
+      ],
+      "tolerance": {
+        "max_v_deviation": 0.0001,
+        "min_spike_time_match": 1.0
+      }
+    }
+  },
+  "environment": {
+    "torch_version": "2.11.0+cu128",
+    "python_version": "3.12.13",
+    "platform": "Linux 6.6.122+",
+    "gpu_name": "Tesla T4",
+    "driver": "580.82.07",
+    "cuda": "12.8",
+    "framework_version": "1.0.0"
+  },
+  "metrics": {
+    "run_id": "20260802_141253_snntorch_seed2",
+    "timestamp": "2026-08-02T14:12:53",
+    "framework": "snntorch",
+    "seed": 2,
+    "config_path": "config/default.yaml",
+    "config_hash": "dc869ef44c44",
+    "dataset": "nmnist",
+    "time_steps": 20,
+    "batch_size": 128,
+    "num_workers": 2,
+    "binarize": false,
+    "denoise_us": 10000,
+    "epochs": 5,
+    "optimizer": "nadam",
+    "lr": 0.002,
+    "surrogate": "atan(2.0)",
+    "trainable_params": 18254,
+    "weight_fingerprint": "5f2de8c28fc112b2",
+    "test_accuracy_pct": 98.45,
+    "train_loss_final": 0.04934306838711103,
+    "test_loss_final": 0.048816549867019055,
+    "train_time_s": 647.3854135229976,
+    "train_time_per_epoch_s": 129.47708270459952,
+    "inference_throughput_samples_per_s": 616.3471030966876,
+    "inference_latency_bs1_ms": 39.91788900020765,
+    "inference_latency_bs1_mean_ms": 41.07731963002152,
+    "inference_latency_bs1_p90_ms": 45.01567300030729,
+    "spike_rate_pct": 2.4542376506947283,
+    "peak_memory_train_mb": 900.98388671875,
+    "peak_memory_infer_mb": 87.6181640625,
+    "peak_reserved_train_mb": 958.0,
+    "peak_reserved_infer_mb": 958.0,
+    "nvml_update_interval_ms": 101.4758580004127,
+    "idle_power_cold_w": 26.33157723577236,
+    "idle_power_after_train_w": 29.094168021680215,
+    "train_energy_duration_s": 735.5095794600002,
+    "train_energy_j": 29627.674609379974,
+    "train_energy_dynamic_j": 8228.635323015373,
+    "energy_warnings": null,
+    "notes": null,
+    "torch_version": "2.11.0+cu128",
+    "python_version": "3.12.13",
+    "platform": "Linux 6.6.122+",
+    "gpu_name": "Tesla T4",
+    "driver": "580.82.07",
+    "cuda": "12.8",
+    "framework_version": "1.0.0",
+    "schema_version": 1
+  },
+  "epochs": [
+    {
+      "epoch": 1,
+      "train_loss": 0.23663506899674733,
+      "train_accuracy_pct": 92.52,
+      "test_loss": 0.09678268131017685,
+      "test_accuracy_pct": 97.2,
+      "epoch_train_time_s": 131.85280820800108,
+      "spike_rate_pct": 2.7631263792398855,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "epoch": 2,
+      "train_loss": 0.08257708251476288,
+      "train_accuracy_pct": 97.38,
+      "test_loss": 0.05830147396028042,
+      "test_accuracy_pct": 98.0,
+      "epoch_train_time_s": 130.9265210220001,
+      "spike_rate_pct": 2.8842487740089906,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "epoch": 3,
+      "train_loss": 0.0651529307415088,
+      "train_accuracy_pct": 97.88833333333334,
+      "test_loss": 0.052775297367572784,
+      "test_accuracy_pct": 98.28,
+      "epoch_train_time_s": 130.5642879449988,
+      "spike_rate_pct": 2.7695264609726196,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "epoch": 4,
+      "train_loss": 0.05709975604116917,
+      "train_accuracy_pct": 98.15833333333333,
+      "test_loss": 0.05043468240350485,
+      "test_accuracy_pct": 98.44,
+      "epoch_train_time_s": 129.00651975799883,
+      "spike_rate_pct": 2.4966176951369023,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "epoch": 5,
+      "train_loss": 0.04934306838711103,
+      "train_accuracy_pct": 98.45666666666666,
+      "test_loss": 0.048816549867019055,
+      "test_accuracy_pct": 98.45,
+      "epoch_train_time_s": 125.03527658999883,
+      "spike_rate_pct": 2.4465571448031604,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    }
+  ],
+  "layers": [
+    {
+      "layer_index": 0,
+      "layer_type": "SnnTorchLIF",
+      "neurons": 10800,
+      "total_spikes": 14116195.0,
+      "opportunities": 552960000,
+      "spike_rate_pct": 2.552841977719907,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "layer_index": 1,
+      "layer_type": "SnnTorchLIF",
+      "neurons": 3872,
+      "total_spikes": 4286313.0,
+      "opportunities": 198246400,
+      "spike_rate_pct": 2.1621139148050106,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    },
+    {
+      "layer_index": 2,
+      "layer_type": "SnnTorchLIF",
+      "neurons": 10,
+      "total_spikes": 46448.0,
+      "opportunities": 512000,
+      "spike_rate_pct": 9.071875,
+      "run_id": "20260802_141253_snntorch_seed2",
+      "schema_version": 1
+    }
+  ],
+  "idle_power_cold": {
+    "mean_w": 26.33157723577236,
+    "min_w": 25.457,
+    "max_w": 37.927,
+    "n": 369
+  },
+  "idle_power_after_train": {
+    "mean_w": 29.094168021680215,
+    "min_w": 28.918,
+    "max_w": 39.505,
+    "n": 369
+  },
+  "energy_warnings": []
+}

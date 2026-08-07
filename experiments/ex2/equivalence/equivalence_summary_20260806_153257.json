@@ -1,0 +1,158 @@
+{
+  "run_timestamp": "20260806_153257",
+  "versions": {
+    "torch": "2.13.0+cpu",
+    "snntorch": "1.0.0",
+    "norse": "1.1.0",
+    "spikingjelly": "0.0.0.0.14"
+  },
+  "config_path": "config/config_ex2.yaml",
+  "neuron": {
+    "snntorch": {
+      "beta": 0.5,
+      "threshold": 1.0,
+      "reset_mechanism": "subtract",
+      "reset_delay": true,
+      "surrogate": {
+        "type": "atan",
+        "alpha": 2.0
+      }
+    },
+    "spikingjelly": {
+      "tau": 2.0,
+      "decay_input": true,
+      "v_threshold": 1.0,
+      "v_reset": 0.0,
+      "detach_reset": true,
+      "step_mode": "s",
+      "backend": "torch",
+      "surrogate": {
+        "type": "atan",
+        "alpha": 2.0
+      }
+    },
+    "norse": {
+      "dt": 0.001,
+      "tau_mem_inv": 100.0,
+      "v_th": 1.0,
+      "v_reset": 0.0,
+      "v_leak": 0.0,
+      "reset_method": "value",
+      "input_scale": 1.0,
+      "surrogate": {
+        "type": "super",
+        "alpha": 100.0
+      }
+    }
+  },
+  "plot_membrane": "pre_reset",
+  "tests": {
+    "constant_step": {
+      "input": {
+        "name": "constant_step",
+        "onset": 10,
+        "amplitude": 0.15
+      },
+      "per_framework": {
+        "snntorch": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.30000001192092896
+        },
+        "spikingjelly": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.15000000596046448
+        },
+        "norse": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.1499885618686676
+        }
+      },
+      "pairs": [
+        {
+          "a": "snntorch",
+          "b": "spikingjelly",
+          "max_v_pre_deviation": 0.15000000596046448,
+          "max_v_post_deviation": 0.15000000596046448,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "norse",
+          "max_v_pre_deviation": 0.22966499626636505,
+          "max_v_post_deviation": 0.22966499626636505,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "spikingjelly",
+          "b": "norse",
+          "max_v_pre_deviation": 0.09060000628232956,
+          "max_v_post_deviation": 0.09060000628232956,
+          "spike_time_match": 1.0
+        }
+      ],
+      "worst_max_v_deviation": 0.22966499626636505,
+      "worst_spike_time_match": 1.0,
+      "passed": false
+    },
+    "poisson": {
+      "input": {
+        "name": "poisson",
+        "rate": 0.15,
+        "amplitude": 0.6,
+        "seed": 0
+      },
+      "per_framework": {
+        "snntorch": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.9011764526367188
+        },
+        "spikingjelly": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.4505882263183594
+        },
+        "norse": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.1572313904762268
+        }
+      },
+      "pairs": [
+        {
+          "a": "snntorch",
+          "b": "spikingjelly",
+          "max_v_pre_deviation": 0.4505882263183594,
+          "max_v_post_deviation": 0.4505882263183594,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "norse",
+          "max_v_pre_deviation": 0.7860000133514404,
+          "max_v_post_deviation": 0.7860000133514404,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "spikingjelly",
+          "b": "norse",
+          "max_v_pre_deviation": 0.3360000252723694,
+          "max_v_post_deviation": 0.3360000252723694,
+          "spike_time_match": 1.0
+        }
+      ],
+      "worst_max_v_deviation": 0.7860000133514404,
+      "worst_spike_time_match": 1.0,
+      "passed": false
+    }
+  },
+  "threshold_boundary_fires_at_exactly_threshold": {
+    "snntorch": false,
+    "spikingjelly": false,
+    "norse": false
+  },
+  "passed": false
+}
