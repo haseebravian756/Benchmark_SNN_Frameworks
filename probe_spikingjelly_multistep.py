@@ -100,6 +100,59 @@ MAX_SPIKE_RATE_PCT = 99.0
 
 
 # ---------------------------------------------------------------------------
+# Working around a stale numpy alias inside SpikingJelly
+# ---------------------------------------------------------------------------
+
+
+def patch_check_ctypes() -> str:
+    """Replace `CKernel.check_ctypes`, which crashes on any numpy >= 1.24.
+
+    `auto_cuda/base.py:249` reads `np.int`, an alias numpy REMOVED in 1.24. Since
+    Colab runs Python 3.12 and the earliest numpy with 3.12 wheels is 1.26, there
+    is no installable numpy on which that line works -- pinning numpy cannot fix
+    this, which is why it is patched instead.
+
+    The line sits in `check_ctypes`, a pure VALIDATION method: it asserts that an
+    integer cupy array was declared as an `int` ctype and computes nothing. It is
+    nevertheless called on every single kernel launch (`base.py:326`) with no flag
+    to disable it, so it has to work.
+
+    `np.int` was literally an alias for the builtin `int` -- numpy's own
+    deprecation message states that substituting `int` "will not modify any
+    behavior and is safe". So this reproduces the original method exactly, with
+    that one substitution, and asserts no less than the original did.
+
+    Returns a human-readable description of what was patched.
+    """
+    import numpy as np
+
+    from spikingjelly.activation_based.auto_cuda import base as ac_base
+
+    def check_ctypes(self, py_dict: dict) -> None:
+        for key, value in py_dict.items():
+            ctype: str = self.cparams[key]
+            if isinstance(value, torch.Tensor):
+                if value.dtype == torch.float:
+                    assert ac_base.startswiths(ctype, ("const float", "float"))
+                elif value.dtype == torch.half:
+                    assert ac_base.startswiths(ctype, ("const half2", "half2"))
+
+            if ac_base.cupy is not None and isinstance(value, ac_base.cupy.ndarray):
+                if value.dtype == np.float32:
+                    assert ac_base.startswiths(ctype, ("const float", "float"))
+                elif value.dtype == np.float16:
+                    assert ac_base.startswiths(ctype, ("const half2", "half2"))
+                elif value.dtype == int:  # was `np.int`, removed in numpy 1.24
+                    assert ac_base.startswiths(ctype, ("const int", "int"))
+
+    ac_base.CKernel.check_ctypes = check_ctypes
+    return (
+        "patched spikingjelly.activation_based.auto_cuda.base.CKernel.check_ctypes "
+        "(np.int -> int; the alias was removed in numpy 1.24)"
+    )
+
+
+# ---------------------------------------------------------------------------
 # Reporting
 # ---------------------------------------------------------------------------
 
@@ -632,6 +685,11 @@ def main(argv: list[str] | None = None) -> int:
         help="required, no default: the neuron whose parameters get validated",
     )
     parser.add_argument("--experiment", help="label only; this probe writes nothing")
+    parser.add_argument(
+        "--patch-spikingjelly",
+        action="store_true",
+        help="work around the np.int crash in auto_cuda/base.py (see patch_check_ctypes)",
+    )
     parser.add_argument("--reps", type=int, default=10, help="timed iterations (default 10)")
     parser.add_argument("--warmup", type=int, default=3, help="untimed iterations (default 3)")
     args = parser.parse_args(argv)
@@ -663,6 +721,12 @@ def main(argv: list[str] | None = None) -> int:
     )
 
     report = Report()
+
+    if args.patch_spikingjelly:
+        print()
+        print(f"NOTE: {patch_check_ctypes()}")
+        print("      Results below are therefore for a PATCHED spikingjelly.")
+
     cupy_ok = check_environment(report, device)
     check_supported_backends(report, params)
     if cupy_ok:
