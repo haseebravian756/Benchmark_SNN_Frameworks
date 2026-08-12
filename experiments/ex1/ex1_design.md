@@ -183,6 +183,36 @@ neuron" semantics as the snnTorch and Norse adapters. This is the same kind of
 deliberate divergence from a library's own reset call as the snnTorch adapter's
 refusal to use `utils.reset`.
 
+**2b. `tau_mem` is a trainable `nn.Parameter`, and `train_alphas: false` does not
+change that.** Found by the **first `check_network.py` run**, from the parameter
+count — not by reading the source:
+
+```
+snntorch        18,254
+spikingjelly    18,254
+norse           18,254
+sinabs          18,257   <-- three extra, one per LIF layer
+```
+
+The architecture accounts for 18,254 exactly (`612 + 9,632 + 8,010`). The three
+extras are one `tau_mem` per LIF layer. `train_alphas` chooses *which* quantity is
+the parameter (τ when false, α when true); it does not decide *whether one exists*.
+
+Two consequences, had it gone unnoticed: sinabs would have been the only framework
+of the four whose decay drifted away from the configured 0.9 during training, and
+the "identical network" claim would have been false by three parameters — with
+`report_ex1.md` reporting a parameter count that silently differed for one
+framework.
+
+`SinabsLIF.__init__` now calls `requires_grad_(False)` on the neuron's parameters.
+This is unconditional, not a config flag, on the same reasoning by which
+`build_lif_node()` refuses SpikingJelly's `step_mode='m'` outright: the other three
+frameworks hold their time constants as plain constants and none of them *can*
+learn one here, so a configurable freeze would only offer the choice of making
+sinabs incomparable. Learning time constants would be a separate experiment that
+all four frameworks take part in. `describe()` records `tau_mem_trainable: false`
+so the intervention lands in the results file.
+
 **3. The defaults aim at ANN→SNN conversion, not at this comparison.**
 `MultiSpike` + `MembraneSubtract` + no leak are exactly the three conditions
 under which a spiking neuron's firing rate equals ReLU — the guarantee sinabs

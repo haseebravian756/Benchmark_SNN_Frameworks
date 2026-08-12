@@ -267,10 +267,23 @@ neuron:
     # is what the other three do (none of them offers this knob at all).
     min_v_mem: null
 
-    # Whether the LEARNABLE parameter is tau_mem or exp(-1/tau_mem).
-    # MUST STAY false: none of the other three frameworks learns its time
-    # constant in this project, so letting sinabs learn its own would turn the
-    # comparison into a comparison of training recipes.
+    # Which quantity is the nn.Parameter: tau_mem (false) or exp(-1/tau_mem)
+    # (true). It matters only if the time constant is being LEARNED.
+    #
+    # ⚠ READ THIS -- it does NOT mean "do not train the time constant", and an
+    # earlier version of this comment wrongly said it did. Either setting leaves
+    # an nn.Parameter in the layer, so with `false` sinabs still puts `tau_mem`
+    # into net.parameters() and the optimiser still learns it. MEASURED: sinabs
+    # reported 18,257 trainable parameters against 18,254 for the other three --
+    # three extra, one per LIF layer.
+    #
+    # src/adapters/sinabs_lif.py therefore FREEZES the neuron's parameters
+    # unconditionally, which is what actually holds the decay at 0.9 and keeps the
+    # parameter count identical. The results file records this as
+    # `tau_mem_trainable: false`.
+    #
+    # So this key only decides which quantity would be frozen. Leave it false: it
+    # keeps `tau_mem` -- the number written above -- as the thing the layer holds.
     train_alphas: false
 
     # Debug recording of v_mem / i_syn at every timestep. Costs memory and would

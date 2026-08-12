@@ -46,6 +46,22 @@ here rather than left to be discovered:
      documented for Norse, with the same consequence: the FORWARD dynamics can be
      matched exactly, the backward pass cannot.
 
+  4. `tau_mem` IS A TRAINABLE nn.Parameter, AND `train_alphas=False` DOES NOT
+     CHANGE THAT. This one was found by the parameter count, not by reading:
+     sinabs reported 18,257 trainable parameters where the other three frameworks
+     all report 18,254 -- three extra, one per LIF layer.
+
+     `train_alphas` chooses WHICH quantity is the parameter (tau_mem when False,
+     exp(-1/tau_mem) when True). It does not decide WHETHER one exists. So with
+     the config's `train_alphas: false`, `tau_mem` still lands in
+     `net.parameters()` and the optimiser still learns it.
+
+     Left alone, sinabs would be the only framework of the four whose decay drifts
+     away from the configured 0.9 during training, and the "identical network"
+     claim would be false by three parameters. `__init__` therefore freezes the
+     neuron's own parameters. See the note on that call for why this is done
+     unconditionally rather than offered as a config choice.
+
 Written against the sinabs `develop` source, READ AND NOT EXECUTED -- sinabs is
 not yet installed in this project. Every quoted line above is reproduced with its
 source file in local_docs/Intro-to-Sinabs.md. Treat the first run as a
@@ -227,6 +243,25 @@ class SinabsLIF(BaseLIF):
         self.neuron_cfg = neuron_cfg
         self.lif = build_lif(neuron_cfg)
 
+        # Freeze the neuron's own parameters -- in practice `tau_mem`, or
+        # `alpha_mem` if train_alphas were ever set true. See note 4 in the module
+        # docstring: sinabs makes the time constant an nn.Parameter regardless of
+        # `train_alphas`, so without this the optimiser learns it.
+        #
+        # Done UNCONDITIONALLY rather than behind a config flag, because there is
+        # nothing here for the user to decide. snnTorch, SpikingJelly and Norse
+        # hold their time constants as plain constants -- none of them can learn
+        # one in this pipeline. A configurable freeze would only offer the choice
+        # of making sinabs incomparable, and "learn the time constants" is a
+        # different experiment that all four frameworks would have to take part in.
+        # This is the same reasoning by which build_lif_node() refuses
+        # SpikingJelly's step_mode 'm' outright instead of accepting it.
+        #
+        # Reported in describe() as `tau_mem_trainable`, so the intervention shows
+        # up in the results file rather than living only in this comment.
+        for parameter in self.lif.parameters():
+            parameter.requires_grad_(False)
+
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         """Charge, fire, reset for ONE timestep.
 
@@ -306,6 +341,12 @@ class SinabsLIF(BaseLIF):
             "min_v_mem": require_optional_float(self.neuron_cfg, "sinabs.min_v_mem"),
             "norm_input": norm_input,
             "train_alphas": require_bool(self.neuron_cfg, "sinabs.train_alphas"),
+            # Always False here, by the freeze in __init__. Recorded rather than
+            # assumed: sinabs makes the time constant trainable by default, so
+            # "we switched it off" is a fact about the run, not about the config.
+            "tau_mem_trainable": any(
+                p.requires_grad for p in self.lif.parameters()
+            ),
             "surrogate": f"{surrogate_type}({surrogate_args})",
             # Derived, printed for reading only -- nothing consumes it. Put on the
             # same decay/gain scale as the other three adapters so the four can be
