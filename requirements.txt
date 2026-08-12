@@ -18,6 +18,34 @@ norse==1.1.0
 spikingjelly==0.0.0.0.14
 tonic==1.6.0
 
+# sinabs -- the fourth framework. See experiments/ex1/ex1_design.md.
+#
+# VERIFIED SAFE with `pip install --dry-run --report` against this venv: adding it
+# installs exactly four packages and leaves torch, numpy, h5py, pbr and matplotlib
+# untouched. That matters twice over -- torch is not moved (so the timing numbers
+# already recorded stay valid) and numpy is not dragged over the <2.0 line that
+# tonic requires. All four are pure-python `py3-none-any` wheels, so there is no
+# platform-specific build to fail on Colab or Kaggle.
+#
+# The four:
+#   sinabs    the library itself
+#   nir       Neuromorphic Intermediate Representation. NOT optional despite being
+#             unused here: sinabs/__init__.py does `from .nir import from_nir,
+#             to_nir` at import time, so `import sinabs` fails without it.
+#   nirtorch  NIR's torch bindings, same story.
+#   samna     SynSense's SDK for talking to DynapCNN/Speck chips. Useless for
+#             simulation, but a hard dependency since sinabs 3.x merged the
+#             hardware backend in. Not importable-by-us, just installed.
+#
+# nir and nirtorch are PINNED deliberately, and it is not redundant. sinabs
+# declares `nir<=1.0.4` while the current nirtorch (2.6) declares `nir>=1.0.6` --
+# mutually exclusive. pip resolves it by backtracking to nirtorch 2.0.2, which is
+# slow and, worse, silently re-resolvable to something else the next time either
+# package publishes. Pinning records the combination that was actually tested.
+sinabs==3.1.3
+nir==1.0.4
+nirtorch==2.0.2
+
 # numpy is held below 2.0 because TONIC ITSELF declares `numpy<2.0.0`
 # (verified from tonic 1.6.0's metadata). This line is documentation -- pip
 # enforces it regardless.

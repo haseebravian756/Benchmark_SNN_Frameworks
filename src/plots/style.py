@@ -35,7 +35,9 @@ OKABE_ITO = {
 }
 
 # Reserved for extra conditions (variants, datasets) in future experiments.
-SPARE_COLOURS = [OKABE_ITO["orange"], OKABE_ITO["reddish_purple"], OKABE_ITO["sky_blue"]]
+# reddish_purple was moved OUT of this list when sinabs claimed it below, to keep
+# the rule that a framework colour is never reused for anything else.
+SPARE_COLOURS = [OKABE_ITO["orange"], OKABE_ITO["sky_blue"]]
 
 GRID_GREY = "#CCCCCC"
 TEXT_GREY = "#444444"
@@ -61,6 +63,15 @@ FRAMEWORKS: dict[str, Identity] = {
         "spikingjelly", "SpikingJelly", OKABE_ITO["vermillion"], "s", "--"
     ),
     "norse": Identity("norse", "Norse", OKABE_ITO["bluish_green"], "^", ":"),
+    # reddish_purple is the only one of the remaining Okabe-Ito colours that is
+    # not easily confused with a colour already in use: sky_blue reads as blue
+    # (snnTorch) and orange reads as vermillion (SpikingJelly).
+    #
+    # Adding a fourth entry here is safe for the existing experiments. Results
+    # .conditions filters FRAMEWORK_ORDER by what is actually PRESENT in the data
+    # (see src/plots/data.py), so ex1 and ex2 figures drawn from runs that contain
+    # no sinabs rows are unchanged.
+    "sinabs": Identity("sinabs", "Sinabs", OKABE_ITO["reddish_purple"], "D", "-."),
 }
 
 FRAMEWORK_ORDER = list(FRAMEWORKS)

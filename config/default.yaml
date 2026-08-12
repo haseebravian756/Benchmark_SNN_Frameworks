@@ -90,7 +90,7 @@ dataset:
 # ---------------------------------------------------------------------------
 # neuron: one block per framework.
 #
-# The same idealised neuron is described three times, because each framework
+# The same idealised neuron is described four times, because each framework
 # names and parameterises it differently. Target neuron:
 #   threshold 1.0 | hard reset to 0 | per-step decay 0.9 | input gain 1.0
 # ---------------------------------------------------------------------------
@@ -212,8 +212,98 @@ neuron:
       type: circ
       alpha: 0.5
 
+  sinabs:
+    # sinabs LIF update, from the class docstring:
+    #   norm_input=true :  v = alpha * v + (1 - alpha) * input
+    #   norm_input=false:  v = alpha * v +               input
+    # with alpha = exp(-1/tau_mem).
+    #
+    # NOTE: sinabs has NO dt. tau_mem is already in timesteps, so it is the time
+    # constant directly -- no unit conversion, unlike Norse's dt * tau_mem_inv.
+    # For decay 0.9:  tau_mem = -1 / ln(0.9) = 9.4912
+    tau_mem: 9.4912
+
+    # null = first-order neuron (membrane state only), matching the other three.
+    # A number here would add a second, synaptic state -- a different neuron.
+    tau_syn: null
+
+    # VERIFIED against the sinabs source: the default is true, which multiplies
+    # the input by (1 - alpha) and drops the input gain from 1.0 to 0.1 at decay
+    # 0.9 -- the same lock Norse has structurally. false decouples the gain from
+    # the decay and keeps it at 1.0.
+    #
+    # THIS IS WHY SINABS NEEDS NO input_scale. Norse's gain cannot be separated
+    # from its decay, which is what forced norse.input_scale=10.0 above. Here one
+    # boolean does it, so there is no compensation factor to carry.
+    norm_input: false
+
+    spike_threshold: 1.0
+
+    # VERIFIED, and the easiest of these to miss: sinabs defaults to MultiSpike,
+    # which lets ONE neuron emit 2, 3 or more spikes in a SINGLE timestep. All
+    # three other frameworks emit a binary spike. "single" matches them.
+    #
+    # The default is not a bug -- no-leak + multi-spike + subtract-reset are the
+    # three conditions that make a spiking neuron's firing rate exactly ReLU,
+    # which is the ANN-to-SNN conversion guarantee sinabs exists to provide. It
+    # is simply a different goal from this comparison.
+    #
+    # WARNING if you ever set this to "multi": spike_rate() in
+    # src/adapters/base.py is documented as a FRACTION (spikes per neuron per
+    # timestep) and can then exceed 1.0, so the spike-rate column stops being
+    # comparable with the other three frameworks.
+    #   single - 0 or 1 spike per timestep      (matches the other three)
+    #   multi  - 0, 1, 2, 3, ... per timestep   (sinabs' own default)
+    spike_fn: single
+
+    # sinabs' equivalent of snnTorch's reset_mechanism, named to match it.
+    # VERIFIED: sinabs defaults to MembraneSubtract (soft), like snnTorch does.
+    #   zero     - hard reset: membrane jumps to v_reset  (matches the other three)
+    #   subtract - soft reset: threshold subtracted, remainder kept
+    reset_mechanism: zero
+    v_reset: 0.0            # used only when reset_mechanism is "zero"
+
+    # Lower clamp on the membrane, applied every timestep. null = no clamp, which
+    # is what the other three do (none of them offers this knob at all).
+    min_v_mem: null
+
+    # Whether the LEARNABLE parameter is tau_mem or exp(-1/tau_mem).
+    # MUST STAY false: none of the other three frameworks learns its time
+    # constant in this project, so letting sinabs learn its own would turn the
+    # comparison into a comparison of training recipes.
+    train_alphas: false
+
+    # Debug recording of v_mem / i_syn at every timestep. Costs memory and would
+    # distort the wall-clock measurement.
+    record_states: false
+
+    # Surrogate gradient. BACKWARD PASS ONLY -- the forward membrane/spike
+    # dynamics are identical regardless of this setting.
+    #
+    # ⚠ OPEN QUESTION, NOT YET RESOLVED. sinabs has NO ATan surrogate, exactly
+    # like Norse. The other three blocks above all use atan/circ tuned to match
+    # atan(alpha=2.0); no equivalent curve-fitting has been done for sinabs yet.
+    # The value below is sinabs' OWN DEFAULT, chosen so this config is runnable
+    # and honest -- it is NOT a matched value, and until it is measured, sinabs'
+    # gradient scale is unknown relative to the other three. Same class of caveat
+    # as docs/norse_superspike_alpha_finding.md.
+    #
+    # Note sinabs uses none of the other frameworks' `alpha` naming, so each type
+    # declares its own real parameter names. Only the keys for the CHOSEN type are
+    # read. Available types and their keys:
+    #   single_exponential   - grad_width, grad_scale   (sinabs' default)
+    #   periodic_exponential - grad_width, grad_scale
+    #   gaussian             - mu, sigma, grad_scale
+    #   multi_gaussian       - mu, sigma, h, s, grad_scale
+    #   heaviside            - window   (a box gradient; crude but trainable,
+    #                                    unlike Norse's gradient-free heaviside)
+    surrogate:
+      type: single_exponential
+      grad_width: 0.5
+      grad_scale: 1.0
+
 # ---------------------------------------------------------------------------
-# training: ONE block, shared by all three frameworks.
+# training: ONE block, shared by all frameworks.
 #
 # Deliberately NOT per-framework. The optimizer and the loss are plain PyTorch --
 # they belong to none of the three libraries -- and all three networks are

@@ -20,6 +20,11 @@ PACKAGES: list[tuple[str, str]] = [
     ("snntorch", "snntorch"),
     ("norse", "norse"),
     ("spikingjelly", "spikingjelly"),
+    # sinabs pulls three packages of its own: nir + nirtorch (the Neuromorphic
+    # Intermediate Representation, imported by sinabs/__init__.py) and samna
+    # (SynSense's chip SDK). None is used by this pipeline, but sinabs will not
+    # import without them, so their versions belong in the appendix too.
+    ("sinabs", "sinabs"),
     ("tonic", "tonic"),
     ("numpy", "numpy"),
     ("pandas", "pandas"),

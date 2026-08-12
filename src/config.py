@@ -109,6 +109,26 @@ def require_float(config: dict[str, Any], dotted_key: str) -> float:
     return float(value)
 
 
+def require_optional_float(config: dict[str, Any], dotted_key: str) -> float | None:
+    """Same as require_float(), but the value may also be null to mean "off".
+
+    The key must still be PRESENT -- an explicit `null` is a decision, a missing
+    key is an oversight, and they should not look the same.
+
+    Needed by settings whose "off" state is not a number: sinabs' `tau_syn`
+    (null = first-order neuron) and `min_v_mem` (null = no lower clamp).
+    """
+    value = require(config, dotted_key)
+    if value is None:
+        return None
+    if isinstance(value, bool) or not isinstance(value, (int, float)):
+        raise ConfigError(
+            f"config key '{dotted_key}' must be a number or null, got "
+            f"{value!r} ({type(value).__name__})"
+        )
+    return float(value)
+
+
 def require_int(config: dict[str, Any], dotted_key: str) -> int:
     """Same as require(), but insists the value is a whole number."""
     value = require(config, dotted_key)

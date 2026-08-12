@@ -2,9 +2,12 @@
 
 Imports are deliberately LAZY -- done inside the function rather than at the top
 of this file. Reason: this project runs one framework per process on purpose, and
-importing all three would pull three libraries into memory, any of which might
+importing all of them would pull every library into memory, any of which might
 initialise CUDA or set global torch state. Importing only the one being measured
 keeps the runs independent.
+
+The laziness also means a framework that is NOT INSTALLED costs nothing until it
+is asked for -- which is currently the case for sinabs.
 """
 
 from __future__ import annotations
@@ -15,10 +18,15 @@ from typing import Any, Callable
 from src.adapters.base import BaseLIF
 from src.config import ConfigError
 
-FRAMEWORKS = ["snntorch", "spikingjelly", "norse"]
+FRAMEWORKS = ["snntorch", "spikingjelly", "norse", "sinabs"]
 
 # Which of the above are actually implemented so far.
-IMPLEMENTED = ["snntorch", "spikingjelly", "norse"]
+#
+# sinabs is listed: its adapter exists and its config block exists. But the
+# PACKAGE is not installed yet, so asking for it raises ImportError at the lazy
+# import below rather than a ConfigError here. That is the honest failure -- the
+# wiring is done, the dependency is not -- and the message below says so.
+IMPLEMENTED = ["snntorch", "spikingjelly", "norse", "sinabs"]
 
 
 def lif_factory(framework: str, neuron_cfg: dict[str, Any]) -> Callable[[], BaseLIF]:
@@ -51,5 +59,20 @@ def lif_factory(framework: str, neuron_cfg: dict[str, Any]) -> Callable[[], Base
         from src.adapters.norse_lif import NorseLIF
 
         return partial(NorseLIF, neuron_cfg)
+
+    if framework == "sinabs":
+        try:
+            from src.adapters.sinabs_lif import SinabsLIF
+        except ImportError as error:  # sinabs is not installed yet
+            raise ConfigError(
+                "framework 'sinabs' is wired up but the package is not installed "
+                f"in this environment ({error}).\n"
+                "  Install it with:  pip install sinabs\n"
+                "  CHECK AFTERWARDS that pip did not move torch -- this project's "
+                "speed numbers assume one fixed torch version, and a silent "
+                "upgrade would invalidate the runs already recorded."
+            ) from error
+
+        return partial(SinabsLIF, neuron_cfg)
 
     raise ConfigError(f"no factory wired up for '{framework}'")  # pragma: no cover
