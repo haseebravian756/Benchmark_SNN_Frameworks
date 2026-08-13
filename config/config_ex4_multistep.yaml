@@ -1,0 +1,79 @@
+# Experiment 4 -- SpikingJelly in its FASTEST mode (open item E5).
+#
+#   python train.py --config config/config_ex4_multistep.yaml --experiment ex4 \
+#       --framework spikingjelly --seed <s> --results-root <drive>
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS CHANGES, AND WHAT IT DOES NOT
+#
+# Exactly TWO values differ from config_ex2.yaml: step_mode and backend. The neuron
+# is the same neuron -- same tau, same decay_input, same threshold, same reset, same
+# surrogate. Only the way it is EXECUTED changes:
+#
+#   ex2   step_mode 's' + torch   our Python loop calls the neuron T times
+#   ex4   step_mode 'm' + cupy    one fused CUDA kernel covers all T timesteps
+#
+# So this is a SPEED experiment with a built-in correctness check. Measured on a
+# Colab T4 before the port was written (probe_spikingjelly_multistep.py):
+#
+#   spikes    BIT-IDENTICAL to ex2's execution  (max difference exactly 0)
+#   gradients agree to 1.19e-07 absolute        (~1 float32 eps)
+#   speed     4.99x on the neuron alone
+#
+# ACCURACY MUST THEREFORE NOT MOVE. It has to land inside ex2's ~0.15 pp noise
+# floor against the ex2 spikingjelly runs at the same seed. If it drifts further,
+# the port is wrong -- not the science. That makes ex2's completed seeds the
+# acceptance criterion for this experiment at no extra cost.
+#
+# The 4.99x is on the NEURON. End-to-end will be lower: Conv2d, MaxPool2d and
+# Linear are untouched and take time of their own.
+# ---------------------------------------------------------------------------
+# WHY A SEPARATE FILE rather than an edit to config_ex2.yaml: collect_results.py
+# refuses to merge rows produced by a different config, and the config hash differs.
+# So ex2's six completed runs cannot be contaminated by this, structurally.
+#
+# THREE THINGS TO DECLARE AS LIMITATIONS when reporting these numbers:
+#
+#   1. The library is PATCHED. spikingjelly 0.0.0.0.14 reads `np.int`, an alias
+#      numpy removed in 1.24, on every kernel launch. No installable numpy has it
+#      (Colab is Python 3.12; earliest numpy there is 1.26), so the fix is applied
+#      at runtime by src/multistep/sj_numpy_compat.py. It corrects a validation
+#      assert and changes no arithmetic -- the bit-identical spikes are the
+#      evidence -- but a reader must be told.
+#
+#   2. Only SpikingJelly has this mode here. snnTorch and Norse have no equivalent
+#      fused kernel in this pipeline, so this is NOT "same pipeline, only the neuron
+#      changed" -- the execution strategy changed too. Comparing ex4's speed against
+#      ex2's snnTorch or Norse compares two different things.
+#
+#   3. cupy accelerates TRAINING ONLY. LIFNode.multi_step_forward branches on
+#      self.training (neuron.py:930): in eval() it takes a torch.jit path instead.
+#      So epoch times see the fused kernel; the latency figure does not.
+#
+# Full design, verification and execution flow:
+#   local_docs/spikingjelly_multistep_intro.md
+# ---------------------------------------------------------------------------
+extends: config_ex2.yaml
+
+neuron:
+  spikingjelly:
+    # 'm' hands the layer the whole [T, batch, C, H, W] tensor at once. This is what
+    # routes the build through src/multistep/ -- there is no separate flag.
+    #
+    # Required for cupy: supported_backends is ('torch',) for 's' and
+    # ('torch', 'cupy') for 'm'. Verified on the installed 0.0.0.0.14.
+    step_mode: m
+
+    # The fused kernel. Needs CUDA and a working cupy; src/multistep validates both
+    # at BUILD time rather than letting it fail partway into training.
+    #
+    # Verified working combination -- cupy 14 requires numpy>=2, which breaks
+    # tonic 1.6.0's numpy<2 requirement:
+    #     cupy-cuda12x 13.6.0 + numpy 1.26.4 + tonic 1.6.0
+    #
+    # Set this to 'torch' for the CONTROL arm. That runs SpikingJelly's own Python
+    # loop over T -- measured at 1.00x, i.e. no faster than our loop. Running both
+    # arms separates "sequence execution" from "CUDA fusion", and attributes the
+    # whole speedup to where it actually comes from. 'torch' also runs on CPU, so
+    # it is how the network gets tested without a GPU.
+    backend: cupy

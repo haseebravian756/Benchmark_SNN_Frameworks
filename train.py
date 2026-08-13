@@ -32,7 +32,7 @@ from typing import Any
 import torch
 import torch.nn as nn
 
-from src.adapters import IMPLEMENTED, lif_factory
+from src.adapters import IMPLEMENTED
 from src.config import (
     ConfigError,
     ephemeral_storage_warning,
@@ -62,7 +62,9 @@ from src.metrics import (
     summarise_power,
     timed,
 )
-from src.network import build_network
+# build_net is build_network for every config with step_mode 's' -- it delegates
+# straight to it. Only neuron.spikingjelly.step_mode 'm' takes a different path.
+from src.multistep.build import build_net
 from src.results import (
     EPOCH_COLUMNS,
     LAYER_COLUMNS,
@@ -283,7 +285,7 @@ def main() -> int:
     print(f"  train {len(train_set)}   test {len(test_set)}   "
           f"T={info.time_steps}  batch {require_int(dataset_cfg, 'batch_size')}")
 
-    net = build_network(lif_factory(args.framework, neuron_cfg), info, seed=seed).to(device)
+    net = build_net(args.framework, neuron_cfg, info, seed=seed).to(device)
     optimizer = build_optimizer(training_cfg, net.parameters())
     loss_fn = build_loss(training_cfg)
     trainable = sum(p.numel() for p in net.parameters() if p.requires_grad)

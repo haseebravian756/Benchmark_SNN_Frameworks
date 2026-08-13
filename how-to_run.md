@@ -14,7 +14,17 @@ Everything else follows from these. There is no third thing to remember.
 |---|---|---|
 | **ex1** — one forced-equivalent neuron | `config/default.yaml` | `ex1` |
 | **ex2** — each framework out of the box | `config/config_ex2.yaml` | `ex2` |
+| **ex4** — SpikingJelly's fused CUDA kernel | `config/config_ex4_multistep.yaml` | `ex4` |
+| **ex4** — its control arm (no kernel) | `config/config_ex4_control.yaml` | `ex4` |
 | scratch / smoke test | either | *omit* → flat in `local_runs/` |
+
+> **ex4 is SpikingJelly only**, and needs one extra install:
+> `pip install "cupy-cuda12x<14"`. The `<14` is load-bearing — cupy 14+ requires
+> numpy 2, which breaks tonic. Run **both** arms: the control isolates how much of
+> the speedup is the CUDA kernel rather than the restructured forward pass. Run
+> `probe_spikingjelly_multistep.py --config config/config_ex4_multistep.yaml
+> --patch-spikingjelly` first; it is a gate and takes about a minute. See
+> `local_docs/spikingjelly_multistep_intro.md`.
 
 **They must agree with each other.** `--config` decides which neuron gets trained;
 `--experiment` decides which folder the numbers land in. Pair them wrongly and you

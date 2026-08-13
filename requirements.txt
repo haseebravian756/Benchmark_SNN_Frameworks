@@ -64,3 +64,24 @@ matplotlib
 # NVML bindings, used to read GPU power for the energy metric.
 # Package name is nvidia-ml-py; the import name is `pynvml`.
 nvidia-ml-py
+
+# ---------------------------------------------------------------------------
+# OPTIONAL: cupy, needed ONLY for ex4 -- SpikingJelly's fused CUDA kernel
+# (neuron.spikingjelly.step_mode 'm' + backend 'cupy'). Deliberately NOT listed as
+# a dependency: it is GPU-only, a large wheel, and no other experiment touches it.
+#
+#     pip install "cupy-cuda12x<14"
+#
+# THE VERSION BOUND IS LOAD-BEARING, not caution:
+#   cupy 14+  requires numpy>=2
+#   tonic 1.6.0 requires numpy<2   (and train.py needs tonic to load the data)
+# so cupy 14 and this pipeline cannot coexist. Installing it plainly upgrades numpy
+# and breaks tonic. cupy 13.x is built against numpy 1.x and works.
+#
+# Verified working on a Colab T4 (torch 2.11.0+cu128, CUDA 12.8):
+#     cupy-cuda12x 13.6.0  +  numpy 1.26.4  +  tonic 1.6.0
+#
+# Confirm with `python probe_spikingjelly_multistep.py --config <cfg>
+# --patch-spikingjelly` before trusting a run: it checks that cupy imports, that
+# the kernel compiles, and that it agrees numerically with the single-step path.
+# ---------------------------------------------------------------------------

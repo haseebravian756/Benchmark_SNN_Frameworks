@@ -34,7 +34,7 @@ from src.metrics import (
     summarise_power,
     timed,
 )
-from src.network import build_network
+from src.multistep.build import build_net
 
 
 def main() -> int:
@@ -78,7 +78,7 @@ def main() -> int:
           f"({args.latency_samples} latency samples, {args.idle_seconds}s idle).")
     print()
 
-    net = build_network(lif_factory(args.framework, neuron_cfg), info, seed=0).to(device)
+    net = build_net(args.framework, neuron_cfg, info, seed=0).to(device)
     batch = torch.rand(
         info.time_steps, args.batch, info.channels, info.height, info.width,
         device=device,

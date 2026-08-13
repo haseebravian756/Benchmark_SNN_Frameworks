@@ -1,0 +1,49 @@
+# Experiment 4, CONTROL arm -- multi-step execution WITHOUT the fused CUDA kernel.
+#
+#   python train.py --config config/config_ex4_control.yaml --experiment ex4 \
+#       --framework spikingjelly --seed <s> --results-root <drive>
+#
+# ---------------------------------------------------------------------------
+# WHY THIS ARM EXISTS
+#
+# config_ex4_multistep.yaml changes TWO things at once against ex2: the network
+# stops looping over timesteps, AND the neuron switches to a fused CUDA kernel. A
+# single run cannot tell you which of those two produced the speedup.
+#
+# This arm changes only the first. `step_mode: m` with `backend: torch` runs
+# SpikingJelly's OWN Python loop over T (neuron.py:932-933 falls through to
+# base.MemoryModule.multi_step_forward), so the sequence plumbing is exercised but
+# no kernel is fused.
+#
+# Measured on a Colab T4 at the real training shape, neuron alone:
+#
+#   ex2 baseline   looped 's' + torch    52.32 ms/iter    1.00x
+#   THIS ARM       'm' + torch           52.55 ms/iter    1.00x   <- no gain
+#   ex4 fast       'm' + cupy            10.48 ms/iter    4.99x
+#
+# So the expectation is that this arm is NOT faster than ex2. Confirming that in a
+# full run is what lets the report attribute the entire speedup to CUDA fusion
+# rather than to the restructured forward pass. A NULL result here is the point.
+#
+# ---------------------------------------------------------------------------
+# SECOND USE: this is the only multi-step config that runs on CPU.
+#
+# `backend: cupy` needs a GPU and src/multistep validates that at build time, so
+# the sequence network cannot be tested locally through it. This arm can:
+#
+#   .venv\Scripts\python check_network.py --config config/config_ex4_control.yaml \
+#       --framework spikingjelly
+#
+# It also does NOT need the library patch (sj_numpy_compat), because np.int is only
+# read on the cupy kernel path. So this arm is the clean, unpatched control in every
+# sense -- which is worth stating in the report.
+#
+# Everything else, including the neuron itself, is inherited unchanged from ex2.
+# Full design: local_docs/spikingjelly_multistep_intro.md
+# ---------------------------------------------------------------------------
+extends: config_ex2.yaml
+
+neuron:
+  spikingjelly:
+    step_mode: m
+    backend: torch

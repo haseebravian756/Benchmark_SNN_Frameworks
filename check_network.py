@@ -32,7 +32,9 @@ from src.config import (
     run_banner,
 )
 from src.data import DATASETS, DataInfo, build_framing
-from src.network import SpikingNet, build_network
+from src.multistep.build import build_net
+from src.multistep.sequence_net import SequenceSpikingNet
+from src.network import SpikingNet
 
 
 def data_info_without_download(dataset_cfg: dict) -> DataInfo:
@@ -96,7 +98,7 @@ def summarise_framework(
     framework: str, neuron_cfg: dict, info: DataInfo, seed: int, batch: int
 ) -> dict:
     """Build one framework's network and report the things that must match."""
-    net = build_network(lif_factory(framework, neuron_cfg), info, seed=seed)
+    net = build_net(framework, neuron_cfg, info, seed=seed)
 
     dummy = torch.zeros(info.time_steps, batch, info.channels, info.height, info.width)
     with torch.no_grad():
@@ -236,18 +238,34 @@ def main() -> int:
           f"  -> {info.num_classes} classes")
     print()
 
-    make_lif = lif_factory(args.framework, neuron_cfg)
-    net = build_network(make_lif, info, seed=args.seed)
+    net = build_net(args.framework, neuron_cfg, info, seed=args.seed)
+
+    # A multi-step network's layers consume the whole [T, batch, ...] tensor, so the
+    # walk below feeds T=1 and prints shapes with that leading dimension dropped.
+    # Same shapes reported either way, so the two modes stay directly comparable.
+    sequence_mode = isinstance(net, SequenceSpikingNet)
 
     # Walk one timestep through the stack, printing what each layer produces.
     print("=" * 72)
     print("layer by layer, shapes for ONE timestep")
+    if sequence_mode:
+        print("(multi-step network: fed as [1, batch, ...], leading 1 not shown)")
     print("=" * 72)
     activation = torch.zeros(args.batch, info.channels, info.height, info.width)
-    print(f"  {'input':<28} {tuple(activation.shape)}")
+    if sequence_mode:
+        activation = activation.unsqueeze(0)
+
+    def shown(tensor: torch.Tensor) -> tuple[int, ...]:
+        return tuple(tensor.shape[1:] if sequence_mode else tensor.shape)
+
+    print(f"  {'input':<28} {shown(activation)}")
     with torch.no_grad():
         for layer in net.layers:
-            activation = layer(activation)
+            # apply_layer is the SAME dispatch forward() uses, so this walk cannot
+            # disagree with what the network really does.
+            activation = (
+                net.apply_layer(layer, activation) if sequence_mode else layer(activation)
+            )
             label = type(layer).__name__
             extra = ""
             if isinstance(layer, torch.nn.Conv2d):
@@ -256,7 +274,7 @@ def main() -> int:
                 extra = f"({layer.kernel_size})"
             elif isinstance(layer, torch.nn.Linear):
                 extra = f"({layer.in_features}->{layer.out_features})"
-            print(f"  {label + ' ' + extra:<28} {tuple(activation.shape)}")
+            print(f"  {label + ' ' + extra:<28} {shown(activation)}")
     net.reset()
 
     linear = [m for m in net.layers if isinstance(m, torch.nn.Linear)][0]
