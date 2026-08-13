@@ -62,16 +62,9 @@ neuron:
   # forced into ex1's neuron -- and would report it as out-of-the-box. Nothing in
   # the code can detect that; the values are all individually valid.
   #
-  # WHY IT IS NOT SIMPLY FILLED IN: `tau_mem` HAS NO CONSTRUCTOR DEFAULT. Like
-  # snnTorch's `beta`, it is a required argument, so kind (D) does not exist for
-  # it and there is no out-of-the-box time constant to write. Supplying one means
-  # finding the (E) value from sinabs' own event-data example, which has not been
-  # looked up yet -- see the open items in experiments/ex1/ex1_design.md.
-  #
-  # UNTIL THEN: ex2 is a THREE-framework experiment. Run it with snntorch,
-  # spikingjelly and norse only. equivalence_check.py will still include sinabs
-  # (it compares whatever imports), so treat any sinabs row in an ex2 equivalence
-  # figure as ex1's neuron sitting in an ex2 plot, not as an ex2 result.
+  # RESOLVED 2026-08-13: the sinabs block IS now overridden, at the bottom of this
+  # neuron section. The answer turned out to be more interesting than a number --
+  # read the block, because out of the box sinabs gives you a NON-LEAKY neuron.
 
   snntorch:
     # snn.Leaky update (docs):  U[t+1] = beta*U[t] + I_in[t+1] - R*U_thr
@@ -216,3 +209,113 @@ neuron:
     surrogate:
       type: super
       alpha: 100.0
+
+  sinabs:
+    # sinabs LIF update:  v = alpha*v + (1-alpha)*x   (norm_input=true)
+    #                     v = alpha*v +         x     (norm_input=false)
+    # with alpha = exp(-1/tau_mem), and NO dt -- tau_mem is already in timesteps.
+    #
+    # =====================================================================
+    # THE FINDING: OUT OF THE BOX, SINABS DOES NOT GIVE YOU A LEAKY NEURON.
+    # =====================================================================
+    # `sinabs.layers.LIF` has NO default tau_mem -- it is a required positional
+    # argument, exactly like snnTorch's `beta`. So kind (D) does not exist for it.
+    #
+    # Kind (E) does not exist either, and that is the interesting part. EVERY ONE
+    # of sinabs' own examples uses IAF, never LIF -- checked, all four:
+    #
+    #   docs/tutorials/nmnist.ipynb              (N-MNIST, BPTT via EXODUS)
+    #       backend.IAFSqueeze(batch_size=batch_size, min_v_mem=-1)
+    #   docs/speck/notebooks/nmnist_quick_start.ipynb   (N-MNIST)
+    #       sl.IAFSqueeze(batch_size=batch_size, min_v_mem=-1.0,
+    #                     surrogate_grad_fn=PeriodicExponential())
+    #   examples/visualizer/gesture_viz.py       (DVS128 Gesture) -> from_model()
+    #   docs/tutorials/bptt.ipynb                (Sequential MNIST) -> from_model()
+    #
+    # and `from_model()`, sinabs' headline ANN->SNN converter, defaults to
+    # `spike_layer_class = sl.IAFSqueeze` (read from the installed
+    # sinabs/from_torch.py:26).
+    #
+    # IAF IS LITERALLY `LIF` WITH THE LEAK TURNED OFF. sinabs/layers/iaf.py calls
+    # super().__init__(tau_mem=np.inf, ..., norm_input=False), so
+    # alpha = exp(-1/inf) = 1. Verified on the installed package: IAF() reports
+    # alpha_mem_calculated = 1.0.
+    #
+    # So the honest out-of-the-box sinabs neuron for event data is expressed here
+    # as tau_mem = infinity. This is NOT a workaround -- it reproduces sinabs' own
+    # IAF exactly, through the LIF class the adapter already uses.
+    #
+    # (E) -- from all four examples above, plus (D) of from_model's
+    #        spike_layer_class. d = 1.0 exactly: the membrane NEVER leaks.
+    tau_mem: .inf
+
+    tau_syn: null           # (D) first-order, one state
+
+    # FORCED, and mathematically forced, not a preference: with alpha = 1 the
+    # normalised gain would be 1 - alpha = 0 and the neuron would be completely
+    # DEAF -- no input could ever enter. sinabs' own IAF hardcodes False for this
+    # exact reason. So d = 1.0, g = 1.0.
+    norm_input: false
+
+    spike_threshold: 1.0    # (D) of LIF, and of from_model
+
+    # (D) MultiSpike. ONE neuron may emit 2, 3 or more spikes in a SINGLE
+    # timestep -- all three other frameworks emit a binary spike.
+    #
+    # ⚠ THIS BREAKS THE SPIKE-RATE COLUMN. src/adapters/base.py documents
+    # spike_rate() as a FRACTION (spikes per neuron per timestep); with multi it
+    # can exceed 1.0, i.e. >100%. The sinabs spike_rate_pct in ex2 is therefore
+    # NOT comparable with the other three. Report it, do not rank it.
+    spike_fn: multi
+
+    # (D) MembraneSubtract -- SOFT reset, keeps the remainder above threshold.
+    reset_mechanism: subtract
+    v_reset: 0.0            # unused while reset_mechanism is "subtract"
+
+    # (E) BOTH N-MNIST tutorials pass min_v_mem=-1.0 explicitly, and it is also
+    # the (D) of from_model (sinabs/from_torch.py:20). A floor on how negative the
+    # membrane may go. NONE of the other three frameworks offers this knob at all,
+    # so it is a sinabs-only asymmetry and belongs in the write-up.
+    min_v_mem: -1.0
+
+    train_alphas: false     # (D). NOTE: the adapter freezes the parameter anyway.
+    record_states: false    # (D)
+
+    # (E) PeriodicExponential, from the N-MNIST BPTT example above. The (D) would
+    # be SingleExponential; ex2 prefers (E) where the framework's own event-data
+    # example is explicit, the same rule applied to SpikingJelly's ATan above.
+    #
+    # It is the coherent choice rather than an arbitrary one: PeriodicExponential
+    # repeats its gradient window at every multiple of the threshold, which is
+    # what a MultiSpike neuron needs -- a single-window surrogate gives no
+    # gradient to the 2nd or 3rd spike of a timestep.
+    #
+    # Both parameters are PeriodicExponential's own defaults.
+    surrogate:
+      type: periodic_exponential
+      grad_width: 0.5
+      grad_scale: 1.0
+
+    # ---------------------------------------------------------------------
+    # WHAT THIS MEANS FOR THE COMPARISON -- state it in the report.
+    #
+    # On the common scale  v[t] = d*v[t-1] + g*x[t]:
+    #
+    #                 d       g       tau (steps)   DC gain
+    #   snntorch      0.5     1.0     1.44          2.0
+    #   spikingjelly  0.5     0.5     1.44          1.0
+    #   norse         0.9     0.1     9.49          1.0
+    #   sinabs        1.0     1.0     INFINITE      UNDEFINED  (g/(1-d) = 1/0)
+    #
+    # Three consequences that are RESULTS, not problems:
+    #   1. sinabs is the only one with perfect memory. It never forgets, so a
+    #      constant input accumulates without bound and DC gain is undefined --
+    #      the column simply cannot be filled in for sinabs.
+    #   2. It is the only NON-leaky neuron in the comparison, so ex2 is
+    #      "three leaky neurons and one integrator", by the libraries' own
+    #      choices. That IS the out-of-the-box answer.
+    #   3. no-leak + MultiSpike + subtract-reset are exactly the three conditions
+    #      under which a spiking neuron's firing rate equals ReLU. sinabs'
+    #      defaults are not a neuron-modelling choice, they are an ANN-conversion
+    #      guarantee. See local_docs/SNNs_Introduction_BaseConcepts.md section 4.
+    # ---------------------------------------------------------------------

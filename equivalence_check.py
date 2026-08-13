@@ -109,7 +109,7 @@ def available_frameworks() -> tuple[list[str], dict[str, str]]:
         try:
             importlib.import_module(name)
         except Exception as error:  # noqa: BLE001 - any failure means "unusable"
-            missing[name] = f"{type(error).__name__}: {error}"
+            missing[name] = f"not importable here -- {type(error).__name__}: {error}"
             continue
         available.append(name)
     return available, missing
@@ -328,44 +328,82 @@ RUNNERS = {
 
 def probe_threshold_boundary(
     neuron_cfg: dict[str, Any], thresholds: dict[str, float], frameworks: list[str]
-) -> dict[str, bool]:
+) -> tuple[dict[str, bool], dict[str, float]]:
     """Does each framework fire when the membrane lands EXACTLY on threshold?
 
-    One timestep, one input equal to the threshold, onto a fresh membrane --
-    so v ends up exactly at the threshold and nothing else can interfere.
+    One timestep, one input equal to the threshold, onto a fresh membrane.
+
+    Returns (fired, v_reached). BOTH are needed, and reporting only the first was
+    actively misleading: the membrane only lands ON the threshold if the input gain
+    is 1. Where the gain is smaller -- ex2's SpikingJelly at g=0.5, Norse at g=0.1 --
+    an input equal to the threshold reaches just 0.5 or 0.1, so "no spike" means
+    "never got there", which says NOTHING about the comparison operator. Printing
+    the voltage actually reached is what keeps those two cases apart.
 
     This is INFORMATION, not a pass/fail criterion: the comparison operator is
     hard-coded in each library and no config value can change it.
     """
     fires: dict[str, bool] = {}
+    reached: dict[str, float] = {}
     for name in frameworks:
         single_step = torch.tensor([thresholds[name]])
-        fires[name] = bool(RUNNERS[name](neuron_cfg, single_step).spikes[0].item() > 0)
-    return fires
+        trace = RUNNERS[name](neuron_cfg, single_step)
+        fires[name] = bool(trace.spikes[0].item() > 0)
+        reached[name] = float(trace.v_pre[0].item())
+    return fires, reached
 
 
 def print_threshold_boundary(
-    fires: dict[str, bool], thresholds: dict[str, float], frameworks: list[str]
+    fires: dict[str, bool],
+    thresholds: dict[str, float],
+    reached: dict[str, float],
+    frameworks: list[str],
 ) -> None:
+    """Report the probe, and say plainly which rows actually tested the operator.
+
+    A row only tests `>` vs `>=` if the membrane REACHED the threshold. Rows where
+    the input gain is below 1 fall short of it and are marked inconclusive rather
+    than counted as `>`, because reporting them as `>` is simply wrong -- see
+    probe_threshold_boundary().
+    """
     print()
     print("-" * 68)
     print("threshold boundary behaviour  (information only, not pass/fail)")
     print("-" * 68)
-    print("  with the membrane landing exactly ON the threshold:")
-    for name in frameworks:
-        verdict = (
-            "FIRES     -> rule is  v >= threshold" if fires[name]
-            else "no spike  -> rule is  v >  threshold"
-        )
-        print(f"    {name:<14} v = {thresholds[name]:<6} {verdict}")
+    print("  one timestep, input = threshold, onto a fresh membrane:")
+    print(f"    {'framework':<14}{'threshold':>10}{'v reached':>11}  outcome")
 
-    if len(set(fires.values())) > 1:
-        disagreeing = [n for n in frameworks if fires[n]]
+    conclusive: dict[str, bool] = {}
+    for name in frameworks:
+        threshold = thresholds[name]
+        landed_on_threshold = abs(reached[name] - threshold) <= 1e-6 * max(1.0, threshold)
+        if landed_on_threshold:
+            conclusive[name] = fires[name]
+            outcome = (
+                "FIRES     -> rule is  v >= threshold" if fires[name]
+                else "no spike  -> rule is  v >  threshold"
+            )
+        else:
+            # Did not arrive at the threshold, so the operator was never exercised.
+            outcome = (
+                f"INCONCLUSIVE -- never reached the threshold "
+                f"(input gain < 1), so this says nothing about > vs >="
+            )
+        print(f"    {name:<14}{threshold:>10.4f}{reached[name]:>11.4f}  {outcome}")
+
+    if len(set(conclusive.values())) > 1:
+        ge = sorted(n for n in conclusive if conclusive[n])
+        gt = sorted(n for n in conclusive if not conclusive[n])
         print()
-        print(f"  NOTE: {', '.join(disagreeing)} use >= while the others use >.")
+        print(f"  NOTE: {', '.join(ge)} use >= ; {', '.join(gt)} use >.")
         print("  This is hard-coded in each library and cannot be configured away.")
         print("  It only bites when the membrane lands exactly on the threshold, which")
         print("  is why equivalence input amplitudes should not equal the threshold.")
+    elif len(conclusive) < len(frameworks):
+        print()
+        print(f"  Only {len(conclusive)} of {len(frameworks)} rows were conclusive. The rest have an")
+        print("  input gain below 1, so an input equal to the threshold cannot reach it in")
+        print("  one step. Their operators are unchanged -- just not measured here.")
 
 
 # ---------------------------------------------------------------------------
@@ -552,9 +590,15 @@ PLOT_STYLE = {
     "snntorch": {"color": "#1f77b4", "linewidth": 4.5, "linestyle": "-", "alpha": 0.45},
     "spikingjelly": {"color": "#d62728", "linewidth": 2.8, "linestyle": "--"},
     "norse": {"color": "#2ca02c", "linewidth": 1.6, "linestyle": ":"},
-    # Okabe-Ito reddish purple, the same colour sinabs carries in
-    # src/plots/style.py, so it reads the same way across every figure.
-    "sinabs": {"color": "#CC79A7", "linewidth": 0.9, "linestyle": "-."},
+    # Goldenrod, not the Okabe-Ito reddish-purple sinabs carries in
+    # src/plots/style.py. Reason: on THIS figure the neighbouring trace is
+    # #d62728 red, and a pink-purple line 0.9pt wide next to it reads as a second
+    # red. Gold is unambiguous against blue/red/green.
+    #
+    # Pure yellow (#F0E442, the Okabe-Ito one) was rejected: at this line width on
+    # a white ground it is effectively invisible. Goldenrod keeps the yellow hue
+    # while staying dark enough to see.
+    "sinabs": {"color": "#DAA520", "linewidth": 1.0, "linestyle": "-."},
 }
 
 MEMBRANE_LABEL = {
@@ -743,6 +787,15 @@ def main() -> int:
     parser.add_argument("--results-root", default="experiments",
                         help="where experiment folders live; on Colab use "
                              "/content/drive/MyDrive/snn_results")
+    parser.add_argument(
+        "--frameworks", default=None, metavar="A,B,C",
+        help="comma-separated subset to compare, e.g. snntorch,spikingjelly,norse. "
+             "Default is every framework that can be imported. REQUIRED FOR EX2: "
+             "config_ex2.yaml describes only three frameworks and lets sinabs "
+             "inherit ex1's forced neuron, so an unrestricted ex2 run would plot "
+             "ex1's sinabs beside three out-of-the-box neurons. See the warning at "
+             "the top of config/config_ex2.yaml.",
+    )
     args = parser.parse_args()
 
     config = load_config(args.config)
@@ -757,6 +810,31 @@ def main() -> int:
         output_dir=banner_output_dir,
     ))
     frameworks, skipped = available_frameworks()
+
+    if args.frameworks is not None:
+        requested = [name.strip() for name in args.frameworks.split(",") if name.strip()]
+        unknown = [name for name in requested if name not in ALL_FRAMEWORKS]
+        if unknown:
+            raise ConfigError(
+                f"--frameworks lists unknown framework(s) {unknown}. "
+                f"Known: {ALL_FRAMEWORKS}"
+            )
+        # An explicitly requested framework that cannot be imported is an ERROR,
+        # not a skip. Silently dropping it would produce a figure with fewer
+        # traces than asked for -- the failure mode this flag exists to prevent.
+        unavailable = [name for name in requested if name not in frameworks]
+        if unavailable:
+            raise ConfigError(
+                f"--frameworks asked for {unavailable}, which cannot be imported "
+                f"here: { {n: skipped[n] for n in unavailable} }"
+            )
+        # Anything deselected is reported as skipped, with the reason, so the
+        # summary JSON still accounts for every framework in ALL_FRAMEWORKS.
+        for name in frameworks:
+            if name not in requested:
+                skipped[name] = "excluded by --frameworks"
+        frameworks = [name for name in ALL_FRAMEWORKS if name in requested]
+
     if len(frameworks) < 2:
         raise ConfigError(
             f"only {frameworks} could be imported, so there is nothing to compare. "
@@ -769,9 +847,9 @@ def main() -> int:
     if skipped:
         print()
         for name, reason in sorted(skipped.items()):
-            print(f"  SKIPPED {name}: not importable here -- {reason}")
+            print(f"  SKIPPED {name}: {reason}")
         print("  These are ABSENT from the results below, which is not the same as")
-        print("  agreeing with them. Install them to include them.")
+        print("  agreeing with them.")
     print(f"config:   {Path(args.config).resolve()}")
 
     device = require_str(config, "equivalence.device")
@@ -823,9 +901,12 @@ def main() -> int:
 
     # No gradients needed: this compares forward dynamics only.
     with torch.no_grad():
-        boundary = probe_threshold_boundary(neuron_cfg, thresholds, frameworks)
-        print_threshold_boundary(boundary, thresholds, frameworks)
+        boundary, reached = probe_threshold_boundary(neuron_cfg, thresholds, frameworks)
+        print_threshold_boundary(boundary, thresholds, reached, frameworks)
         summary["threshold_boundary_fires_at_exactly_threshold"] = boundary
+        # The voltage each framework actually reached, so a later reader can tell a
+        # genuine ">" from a "never got there". See probe_threshold_boundary().
+        summary["threshold_boundary_v_reached"] = reached
 
         for spec in input_specs:
             test_name = spec["name"]

@@ -364,11 +364,46 @@ norse          v = 1.0    no spike  -> rule is  v >  threshold
 sinabs         v = 1.0    FIRES     -> rule is  v >= threshold
 ```
 
-This follows from `SingleSpike`'s `(v_mem - spike_threshold >= 0)`. It is
-hard-coded and cannot be configured away, and it only bites when the membrane
-lands exactly on the threshold — which is why the equivalence amplitudes stay
-below 1.0. Previously this was a 1-against-2 split; it is now 2-against-2, which
-is a better sentence for the write-up than "SpikingJelly is the odd one out".
+**The question is narrow:** the membrane lands *exactly* on 1.0 — precisely the
+threshold, not a hair above. Does the neuron fire? There is no standard answer;
+each library hard-coded one of two rules, and **two picked each.**
+
+### The rule, in each library's own source
+
+Read from the installed packages in this project's `.venv`. Every framework
+computes `v − threshold` first and compares the result against 0, so `> 0` means
+`v > threshold` and `>= 0` means `v >= threshold`.
+
+| framework | version | file : line | the actual line of code | rule | fires at exactly 1.0? |
+|---|---|---|---|---|---|
+| snnTorch | 1.0.0 | `snntorch/surrogate.py:190`<br>in `ATan.forward` (class at `:156`) | `out = (input_ > 0).float()` | **`>`** | **no** |
+| SpikingJelly | 0.0.0.0.14 | `spikingjelly/activation_based/surrogate.py:50`<br>in `heaviside()` (def at `:13`) | `return (x >= 0).to(x)` | **`>=`** | **YES** |
+| Norse | 1.1.0 | `norse/torch/functional/heaviside.py:20`<br>in `heaviside()` | `return torch.gt(data, torch.as_tensor(0.0)).to(data.dtype)` | **`>`** | **no** |
+| sinabs | 3.1.3 | `sinabs/activation/spike_generation.py:122`<br>in `SingleSpike.forward` | `spikes = (v_mem - spike_threshold >= 0).float()` | **`>=`** | **YES** |
+
+Two supporting details:
+
+- **snnTorch's comparison lives in the surrogate, not the neuron.**
+  `snntorch/_neurons/neurons.py:80-81` does `mem_shift = mem - self.threshold` then
+  `spk = self.spike_grad(mem_shift)`, so the operator depends on which surrogate is
+  configured. ex1 uses `atan`, hence `ATan.forward` above. Note two other classes in
+  that file (`StraightThroughEstimator:11`, `Triangular:53`) contain an identical
+  `(input_ > 0)` line at `:34` and `:81` — do not cite those by mistake.
+- **Norse states it in its own docstring:**
+  `H[n] = 0 for n <= 0, 1 for n > 0`.
+
+### Why it matters, and why it does not
+
+It is hard-coded in every case and cannot be configured away. But it only bites
+when the membrane lands *exactly* on the threshold, which with float32 and real
+event data essentially never happens — so it does **not** affect any accuracy or
+spike-rate number in this experiment. It is a documented library difference, not a
+defect in any of the four, and it is why `default.yaml` insists the equivalence
+input amplitudes stay strictly below 1.0.
+
+**For the write-up:** before sinabs this probe read 1-against-2, which invites the
+sentence "SpikingJelly is the odd one out". At 2-against-2 the honest sentence is
+that the SNN ecosystem is genuinely split 50/50 on what "reaching threshold" means.
 
 ---
 

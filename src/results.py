@@ -122,19 +122,23 @@ def environment_info(framework: str) -> dict[str, Any]:
         "framework_version": "",
     }
 
+    # Deliberately generic rather than one branch per framework. The previous
+    # if/elif chain silently produced an EMPTY framework_version for any framework
+    # it did not name, which is how sinabs' first three ex1 runs were recorded with
+    # no version at all -- the one column a version-sensitive benchmark cannot
+    # afford to lose. Adding a fifth framework now cannot reintroduce that hole.
+    #
+    # Every framework's import name happens to equal its pip name, so one lookup
+    # serves both attribute and metadata styles: snntorch, norse and sinabs expose
+    # __version__; spikingjelly does not, and falls back to pip metadata.
     try:
-        if framework == "snntorch":
-            import snntorch
+        from importlib import import_module
+        from importlib.metadata import version
 
-            info["framework_version"] = snntorch.__version__
-        elif framework == "norse":
-            import norse
-
-            info["framework_version"] = norse.__version__
-        elif framework == "spikingjelly":
-            from importlib.metadata import version
-
-            info["framework_version"] = version("spikingjelly")
+        module = import_module(framework)
+        info["framework_version"] = (
+            getattr(module, "__version__", None) or version(framework)
+        )
     except Exception:  # noqa: BLE001 - a missing version must not fail a run
         pass
 
