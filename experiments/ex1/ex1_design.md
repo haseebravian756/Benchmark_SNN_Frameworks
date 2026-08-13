@@ -312,12 +312,13 @@ what the numbers may be claimed to mean.
    `circ(0.5)` — sinabs' gradient scale relative to the other three is **unknown**,
    and any accuracy difference cannot be attributed to the framework rather than
    to the surrogate. This is the single biggest caveat.
-2. **`equivalence_check.py` still hardcodes three frameworks** (its own
-   `FRAMEWORKS` list at line 46, plus a `RUNNERS` dict and 3-row raster plots).
-   sinabs will not appear in the equivalence figures until that is extended. The
-   adapter already exposes `build_lif(neuron_cfg, spike_threshold=...)`, matching
-   the signature the other three provide for exactly this purpose, so the
-   extension is mechanical.
+2. **The `tau_mem` rounding is visible in the equivalence check.** Not a defect,
+   but it must not be mistaken for one. `tau_mem: 9.4912` gives
+   `decay = 0.899999784`, an error of −2.16e-07 per step against the exact 0.9,
+   which accumulates to the ~1e-06 deviations in §5. The exact value is
+   `tau_mem = 9.4912215810`. Writing more digits would drop sinabs to float32
+   epsilon like Norse; leaving it is also defensible, since 1e-06 is 100× under
+   the 1e-04 reference. **Your call** — it is a config value.
 3. **The adapter was written against the `develop` branch, but `requirements.txt`
    pins the 3.1.3 release.** Every quoted source line came from `develop`. The two
    should be the same for these classes, but that is an assumption, not a check —
@@ -325,7 +326,56 @@ what the numbers may be claimed to mean.
 4. **Nothing has been executed.** Every claim about sinabs' behaviour in this
    document is read from source, not observed. The first run is a verification run.
 
+---
+
+# Part 5 — equivalence check: measured, four-way
+
+`equivalence_check.py` was extended to four frameworks and **run**. It now skips
+any framework it cannot import, prints why, and records both
+`frameworks_compared` and `frameworks_skipped` in the summary JSON — so a
+three-framework summary can never later be mistaken for a four-way run in which
+the fourth silently agreed.
+
+## 5.1 Result: sinabs matches the other three
+
+| pair | max\|dv\| pre | spike times |
+|---|---|---|
+| snntorch vs spikingjelly | 0.000e+00 | 100 % |
+| snntorch vs norse | 1.192e-07 | 100 % |
+| **snntorch vs sinabs** | **8.345e-07** | **100 %** |
+| **norse vs sinabs** | **1.192e-06** | **100 %** |
+
+Worst across both input tests: **1.192e-06**, against the 1.0e-04 reference —
+100× inside it. Spike times match **100 %** for every pair, on both the
+`constant_step` and `poisson` inputs. All four fire 4 spikes on poisson, 8 on
+constant_step, with identical first-spike steps.
+
+**The translation is correct.** sinabs' deviation is larger than Norse's for one
+reason only, and it is arithmetic rather than a mismatch — see open item 2.
+
+## 5.2 A genuine new finding: sinabs uses `v >= threshold`
+
+The boundary probe now splits **2 against 2**:
+
+```
+snntorch       v = 1.0    no spike  -> rule is  v >  threshold
+spikingjelly   v = 1.0    FIRES     -> rule is  v >= threshold
+norse          v = 1.0    no spike  -> rule is  v >  threshold
+sinabs         v = 1.0    FIRES     -> rule is  v >= threshold
+```
+
+This follows from `SingleSpike`'s `(v_mem - spike_threshold >= 0)`. It is
+hard-coded and cannot be configured away, and it only bites when the membrane
+lands exactly on the threshold — which is why the equivalence amplitudes stay
+below 1.0. Previously this was a 1-against-2 split; it is now 2-against-2, which
+is a better sentence for the write-up than "SpikingJelly is the odd one out".
+
+---
+
 **Closed since Part 1 was written:**
+
+- ~~`equivalence_check.py` hardcodes three frameworks.~~ Extended, run, and
+  reported above.
 
 - ~~Whether ex1's existing three runs need redoing.~~ **No.** torch is not moved
   (§3.1, measured), so the recorded timings stay valid.

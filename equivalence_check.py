@@ -1,7 +1,7 @@
-"""Prove that the three frameworks' LIF neurons behave identically.
+"""Prove that the frameworks' LIF neurons behave identically.
 
-Builds ONE leaky integrate-and-fire neuron in snnTorch, SpikingJelly and Norse
-using the per-framework parameters in the config, feeds all three the exact
+Builds ONE leaky integrate-and-fire neuron in snnTorch, SpikingJelly, Norse and
+sinabs using the per-framework parameters in the config, feeds them all the exact
 same input current, and compares what comes out.
 
 There is no network, no dataset and no training here -- just one neuron each,
@@ -9,12 +9,21 @@ so that if the traces disagree the cause can only be the parameter translation.
 
     python equivalence_check.py --config config/default.yaml
 
+FRAMEWORKS THAT ARE NOT INSTALLED ARE SKIPPED, NOT FATAL. This script is meant to
+run on a laptop (equivalence.device is cpu -- a single neuron is a few hundred
+numbers), and a laptop may reasonably have only some of the four installed. Which
+ones ran, and why any were skipped, is printed at the top and recorded in the
+summary JSON: a summary showing three frameworks instead of four must say so
+itself, or it is indistinguishable later from a four-way run whose fourth
+framework silently agreed.
+
 Exit code is 0 if every test passes, 1 otherwise.
 """
 
 from __future__ import annotations
 
 import argparse
+import importlib
 import json
 import sys
 from datetime import datetime
@@ -43,7 +52,21 @@ from src.config import (  # noqa: E402
 )
 
 # The order these appear in every table, plot legend and comparison.
-FRAMEWORKS = ["snntorch", "spikingjelly", "norse"]
+#
+# This is the full roster. What actually runs is the subset that can be imported
+# here -- see available_frameworks() -- and that subset is threaded through every
+# function below as an argument rather than read from a global, so a three-way run
+# and a four-way run cannot get their columns mixed up.
+ALL_FRAMEWORKS = ["snntorch", "spikingjelly", "norse", "sinabs"]
+
+# Where each framework's threshold lives in the config. They are supposed to be
+# equal; main() says so loudly if they are not.
+THRESHOLD_KEY = {
+    "snntorch": "snntorch.threshold",
+    "spikingjelly": "spikingjelly.v_threshold",
+    "norse": "norse.v_th",
+    "sinabs": "sinabs.spike_threshold",
+}
 
 # A threshold no membrane in this experiment can reach. Used for the "shadow"
 # neurons described in the runners below: a neuron that can never fire also
@@ -73,17 +96,37 @@ class Trace(NamedTuple):
 # ---------------------------------------------------------------------------
 
 
-def framework_versions() -> dict[str, str]:
-    import norse
-    import snntorch
+def available_frameworks() -> tuple[list[str], dict[str, str]]:
+    """Split ALL_FRAMEWORKS into (importable here, missing with the reason).
 
-    return {
-        "torch": torch.__version__,
-        "snntorch": snntorch.__version__,
-        "norse": norse.__version__,
+    Import is the only honest test. Checking pip metadata would call a framework
+    present that cannot actually load -- which is exactly the state sinabs is in on
+    a machine where `nir` failed to install, since sinabs/__init__.py imports it.
+    """
+    available: list[str] = []
+    missing: dict[str, str] = {}
+    for name in ALL_FRAMEWORKS:
+        try:
+            importlib.import_module(name)
+        except Exception as error:  # noqa: BLE001 - any failure means "unusable"
+            missing[name] = f"{type(error).__name__}: {error}"
+            continue
+        available.append(name)
+    return available, missing
+
+
+def framework_versions(frameworks: list[str]) -> dict[str, str]:
+    """Version per framework that actually ran, plus torch.
+
+    Only the frameworks in `frameworks` are touched: importing one that is absent
+    would raise, and a missing framework is a skip, not an error.
+    """
+    versions = {"torch": torch.__version__}
+    for name in frameworks:
+        module = importlib.import_module(name)
         # spikingjelly exposes no __version__ attribute; ask pip instead.
-        "spikingjelly": package_version("spikingjelly"),
-    }
+        versions[name] = getattr(module, "__version__", None) or package_version(name)
+    return versions
 
 
 # ---------------------------------------------------------------------------
@@ -223,10 +266,58 @@ def run_norse(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
     return Trace(torch.stack(v_pre), torch.stack(v_post), torch.stack(spikes))
 
 
+def run_sinabs(neuron_cfg: dict[str, Any], current: torch.Tensor) -> Trace:
+    # Same builder the training adapter uses, so sinabs' parameters are read in
+    # exactly one place and the two cannot drift apart.
+    from src.adapters.sinabs_lif import build_lif
+
+    real = build_lif(neuron_cfg)
+    shadow = build_lif(neuron_cfg, spike_threshold=NEVER_FIRES_THRESHOLD)
+
+    # sinabs is the SpikingJelly case -- state on the module -- so it is seeded by
+    # assignment. Two sinabs-specific wrinkles, both of which would corrupt the
+    # trace silently rather than raise:
+    #
+    # 1. Its forward unpacks `batch, time, *trailing = input.shape`, so one
+    #    timestep for one neuron must be shaped (1, 1), not (1,). See the module
+    #    docstring of src/adapters/sinabs_lif.py.
+    #
+    # 2. The state must be initialised BEFORE the first assignment below.
+    #    is_state_initialised() is False while ANY buffer still has shape [0], and
+    #    a fresh LIF has two buffers (v_mem and i_syn). Assigning only v_mem would
+    #    leave i_syn at shape [0], so the first forward would call
+    #    init_state_with_shape() and overwrite the value just seeded. It happens to
+    #    be harmless at t=0, where the seed is zero anyway, but it would quietly
+    #    discard every later seed if the buffer bookkeeping ever changed.
+    state_shape = (1,)  # (batch,) with no trailing dimensions
+    real.init_state_with_shape(state_shape)
+    shadow.init_state_with_shape(state_shape)
+
+    membrane = torch.zeros(1)
+    v_pre, v_post, spikes = [], [], []
+    for value in current:
+        step_input = value.reshape(1, 1)  # (batch=1, time=1)
+
+        shadow.v_mem = membrane.clone()
+        shadow(step_input)
+        charged = shadow.v_mem.clone()
+
+        real.v_mem = membrane.clone()
+        spike = real(step_input)
+        membrane = real.v_mem.clone()
+
+        v_pre.append(charged.reshape(()))
+        v_post.append(membrane.reshape(()))
+        spikes.append(spike.reshape(()))
+
+    return Trace(torch.stack(v_pre), torch.stack(v_post), torch.stack(spikes))
+
+
 RUNNERS = {
     "snntorch": run_snntorch,
     "spikingjelly": run_spikingjelly,
     "norse": run_norse,
+    "sinabs": run_sinabs,
 }
 
 
@@ -236,7 +327,7 @@ RUNNERS = {
 
 
 def probe_threshold_boundary(
-    neuron_cfg: dict[str, Any], thresholds: dict[str, float]
+    neuron_cfg: dict[str, Any], thresholds: dict[str, float], frameworks: list[str]
 ) -> dict[str, bool]:
     """Does each framework fire when the membrane lands EXACTLY on threshold?
 
@@ -247,19 +338,21 @@ def probe_threshold_boundary(
     hard-coded in each library and no config value can change it.
     """
     fires: dict[str, bool] = {}
-    for name in FRAMEWORKS:
+    for name in frameworks:
         single_step = torch.tensor([thresholds[name]])
         fires[name] = bool(RUNNERS[name](neuron_cfg, single_step).spikes[0].item() > 0)
     return fires
 
 
-def print_threshold_boundary(fires: dict[str, bool], thresholds: dict[str, float]) -> None:
+def print_threshold_boundary(
+    fires: dict[str, bool], thresholds: dict[str, float], frameworks: list[str]
+) -> None:
     print()
     print("-" * 68)
     print("threshold boundary behaviour  (information only, not pass/fail)")
     print("-" * 68)
     print("  with the membrane landing exactly ON the threshold:")
-    for name in FRAMEWORKS:
+    for name in frameworks:
         verdict = (
             "FIRES     -> rule is  v >= threshold" if fires[name]
             else "no spike  -> rule is  v >  threshold"
@@ -267,7 +360,7 @@ def print_threshold_boundary(fires: dict[str, bool], thresholds: dict[str, float
         print(f"    {name:<14} v = {thresholds[name]:<6} {verdict}")
 
     if len(set(fires.values())) > 1:
-        disagreeing = [n for n in FRAMEWORKS if fires[n]]
+        disagreeing = [n for n in frameworks if fires[n]]
         print()
         print(f"  NOTE: {', '.join(disagreeing)} use >= while the others use >.")
         print("  This is hard-coded in each library and cannot be configured away.")
@@ -280,7 +373,7 @@ def print_threshold_boundary(fires: dict[str, bool], thresholds: dict[str, float
 # ---------------------------------------------------------------------------
 
 
-def compare(traces: dict[str, Trace]) -> dict[str, Any]:
+def compare(traces: dict[str, Trace], frameworks: list[str]) -> dict[str, Any]:
     """Measure how far the frameworks' traces are apart. No verdict.
 
     This script reports numbers and draws plots; whether a given deviation matters
@@ -298,8 +391,8 @@ def compare(traces: dict[str, Trace]) -> dict[str, Any]:
     worst_deviation = 0.0
     worst_spike_match = 1.0
 
-    for index, first in enumerate(FRAMEWORKS):
-        for second in FRAMEWORKS[index + 1:]:
+    for index, first in enumerate(frameworks):
+        for second in frameworks[index + 1:]:
             a, b = traces[first], traces[second]
 
             deviation_pre = (a.v_pre - b.v_pre).abs().max().item()
@@ -335,14 +428,19 @@ def compare(traces: dict[str, Trace]) -> dict[str, Any]:
     }
 
 
-def print_report(test_name: str, result: dict[str, Any], tolerance: dict[str, float]) -> None:
+def print_report(
+    test_name: str,
+    result: dict[str, Any],
+    tolerance: dict[str, float],
+    frameworks: list[str],
+) -> None:
     print()
     print("=" * 68)
     print(f"TEST: {test_name}")
     print("=" * 68)
 
     print(f"{'framework':<14}{'total spikes':>14}{'first spike step':>18}{'peak v (pre-reset)':>22}")
-    for name in FRAMEWORKS:
+    for name in frameworks:
         stats = result["per_framework"][name]
         first = "never" if stats["first_spike_step"] is None else stats["first_spike_step"]
         print(
@@ -394,6 +492,7 @@ def print_divergence(
     current: torch.Tensor,
     traces: dict[str, Trace],
     max_v_deviation: float,
+    frameworks: list[str],
     context_steps: int = 6,
 ) -> None:
     """Show the first timestep where the frameworks stop agreeing.
@@ -402,9 +501,9 @@ def print_divergence(
     normally enough to identify which of the four usual causes it is: input
     gain, reset type, decay factor, or an off-by-one in when the reset lands.
     """
-    stacked_pre = torch.stack([traces[name].v_pre for name in FRAMEWORKS])
-    stacked_post = torch.stack([traces[name].v_post for name in FRAMEWORKS])
-    stacked_spikes = torch.stack([traces[name].spikes for name in FRAMEWORKS])
+    stacked_pre = torch.stack([traces[name].v_pre for name in frameworks])
+    stacked_post = torch.stack([traces[name].v_post for name in frameworks])
+    stacked_spikes = torch.stack([traces[name].spikes for name in frameworks])
 
     # At each timestep: how far apart are the most-distant two frameworks?
     def spread(stack: torch.Tensor) -> torch.Tensor:
@@ -426,13 +525,13 @@ def print_divergence(
     print()
     print(f"  first divergence at timestep {first}. Steps {start}-{stop - 1}:")
     header = f"    {'t':>3} {'input':>8}"
-    for name in FRAMEWORKS:
+    for name in frameworks:
         header += f" | {name[:10] + ' pre':>15} {'post':>10} {'spk':>4}"
     print(header)
     print("    " + "-" * (len(header) - 4))
     for t in range(start, stop):
         row = f"    {t:>3} {current[t].item():>8.4f}"
-        for index in range(len(FRAMEWORKS)):
+        for index in range(len(frameworks)):
             row += (
                 f" | {stacked_pre[index, t].item():>15.6f}"
                 f" {stacked_post[index, t].item():>10.6f}"
@@ -445,13 +544,17 @@ def print_divergence(
 # Plot
 # ---------------------------------------------------------------------------
 
-# Deliberately different line widths and dash patterns: when the three traces
-# agree they sit exactly on top of each other, and the only way to see that all
-# three are present is for the thinner ones to draw over the thicker ones.
+# Deliberately different line widths and dash patterns: when the traces agree they
+# sit exactly on top of each other, and the only way to see that all of them are
+# present is for the thinner ones to draw over the thicker ones. Widths must
+# therefore stay strictly decreasing in this dict's order.
 PLOT_STYLE = {
     "snntorch": {"color": "#1f77b4", "linewidth": 4.5, "linestyle": "-", "alpha": 0.45},
-    "spikingjelly": {"color": "#d62728", "linewidth": 2.2, "linestyle": "--"},
-    "norse": {"color": "#2ca02c", "linewidth": 1.2, "linestyle": ":"},
+    "spikingjelly": {"color": "#d62728", "linewidth": 2.8, "linestyle": "--"},
+    "norse": {"color": "#2ca02c", "linewidth": 1.6, "linestyle": ":"},
+    # Okabe-Ito reddish purple, the same colour sinabs carries in
+    # src/plots/style.py, so it reads the same way across every figure.
+    "sinabs": {"color": "#CC79A7", "linewidth": 0.9, "linestyle": "-."},
 }
 
 MEMBRANE_LABEL = {
@@ -461,29 +564,36 @@ MEMBRANE_LABEL = {
 
 
 def metadata_lines(
-    neuron_cfg: dict[str, Any], spec: dict[str, Any], steps: int, current: torch.Tensor
+    neuron_cfg: dict[str, Any],
+    spec: dict[str, Any],
+    steps: int,
+    current: torch.Tensor,
+    frameworks: list[str],
+    skipped: dict[str, str],
 ) -> list[str]:
     """The neuron settings that produced this figure, for the caption block.
 
     A saved plot is worthless six weeks later if you cannot tell which
     parameters produced it, so every value that shapes the run is printed on
-    the figure itself.
+    the figure itself -- including which frameworks were absent, so a
+    three-trace figure is never mistaken for a four-way agreement.
     """
+    import math
+
     snn_cfg = neuron_cfg["snntorch"]
     sj_cfg = neuron_cfg["spikingjelly"]
     norse_cfg = neuron_cfg["norse"]
 
     # Derived, and shown for reading convenience only -- nothing in the code
     # consumes these. Each framework is still driven purely by its own block.
-    snn_decay, snn_gain = snn_cfg["beta"], 1.0
-    sj_decay, sj_gain = 1.0 - 1.0 / sj_cfg["tau"], 1.0
+    effective: dict[str, tuple[float, float]] = {
+        "snntorch": (snn_cfg["beta"], 1.0),
+        "spikingjelly": (1.0 - 1.0 / sj_cfg["tau"], 1.0),
+    }
     norse_step = norse_cfg["dt"] * norse_cfg["tau_mem_inv"]
-    norse_decay, norse_gain = 1.0 - norse_step, norse_step * norse_cfg["input_scale"]
+    effective["norse"] = (1.0 - norse_step, norse_step * norse_cfg["input_scale"])
 
-    input_bits = " ".join(f"{k}={v}" for k, v in spec.items() if k != "name")
-    events = int((current != 0).sum().item())
-
-    return [
+    lines = [
         f"snntorch      beta={snn_cfg['beta']}  threshold={snn_cfg['threshold']}  "
         f"reset_mechanism={snn_cfg['reset_mechanism']}  reset_delay={snn_cfg['reset_delay']}  "
         f"surrogate={snn_cfg['surrogate']['type']}(alpha={snn_cfg['surrogate']['alpha']})",
@@ -496,13 +606,51 @@ def metadata_lines(
         f"v_th={norse_cfg['v_th']}  v_reset={norse_cfg['v_reset']}  v_leak={norse_cfg['v_leak']}  "
         f"input_scale={norse_cfg['input_scale']}  "
         f"surrogate={norse_cfg['surrogate']['type']}(alpha={norse_cfg['surrogate']['alpha']})",
-
-        f"effective     v = decay*v + gain*I  ->  snntorch {snn_decay:.3f}/{snn_gain:.3f}   "
-        f"spikingjelly {sj_decay:.3f}/{sj_gain:.3f}   norse {norse_decay:.3f}/{norse_gain:.3f}",
-
-        f"input         {spec['name']}  steps={steps}  {input_bits}  "
-        f"({events} non-zero timesteps)",
     ]
+
+    # sinabs is read defensively: an ex2-style config predating the sinabs block
+    # should still produce a figure for the frameworks it does describe.
+    sin_cfg = neuron_cfg.get("sinabs")
+    if sin_cfg is not None:
+        sin_decay = math.exp(-1.0 / sin_cfg["tau_mem"])
+        effective["sinabs"] = (
+            sin_decay,
+            (1.0 - sin_decay) if sin_cfg["norm_input"] else 1.0,
+        )
+        surrogate = sin_cfg["surrogate"]
+        surrogate_args = " ".join(
+            f"{k}={v}" for k, v in surrogate.items() if k != "type"
+        )
+        # Abbreviated keys where the others spell them out: sinabs has the most
+        # settings of the four and the full names overflow the figure width.
+        lines.append(
+            f"sinabs        tau_mem={sin_cfg['tau_mem']}  norm_input={sin_cfg['norm_input']}  "
+            f"spike_threshold={sin_cfg['spike_threshold']}  spike_fn={sin_cfg['spike_fn']}  "
+            f"reset={sin_cfg['reset_mechanism']}  v_reset={sin_cfg['v_reset']}  "
+            f"surrogate={surrogate['type']}({surrogate_args})"
+        )
+
+    input_bits = " ".join(f"{k}={v}" for k, v in spec.items() if k != "name")
+    events = int((current != 0).sum().item())
+
+    shown = "   ".join(
+        f"{name} {effective[name][0]:.3f}/{effective[name][1]:.3f}"
+        for name in frameworks
+        if name in effective
+    )
+    lines.append(f"effective     v = decay*v + gain*I  ->  {shown}")
+
+    if skipped:
+        lines.append(
+            "NOT INSTALLED " + ", ".join(sorted(skipped))
+            + "  -- absent from this figure, NOT agreeing with it"
+        )
+
+    lines.append(
+        f"input         {spec['name']}  steps={steps}  {input_bits}  "
+        f"({events} non-zero timesteps)"
+    )
+    return lines
 
 
 def save_plot(
@@ -515,6 +663,7 @@ def save_plot(
     caption: list[str],
     run_timestamp: str,
     membrane_view: str,
+    frameworks: list[str],
 ) -> None:
     steps = torch.arange(len(current))
     figure, (ax_input, ax_membrane, ax_raster) = plt.subplots(
@@ -532,7 +681,7 @@ def save_plot(
     ax_input.set_ylabel("input\ncurrent I")
     ax_input.grid(alpha=0.3)
 
-    for name in FRAMEWORKS:
+    for name in frameworks:
         trace = traces[name]
         series = trace.v_pre if membrane_view == "pre_reset" else trace.v_post
         ax_membrane.plot(steps, series, label=name, **PLOT_STYLE[name])
@@ -542,19 +691,19 @@ def save_plot(
     ax_membrane.legend(loc="upper right")
     ax_membrane.grid(alpha=0.3)
 
-    for row, name in enumerate(FRAMEWORKS):
+    for row, name in enumerate(frameworks):
         firing_steps = torch.nonzero(traces[name].spikes).flatten()
         ax_raster.scatter(firing_steps, torch.full_like(firing_steps, row),
                           marker="|", s=180, color=PLOT_STYLE[name]["color"])
-    ax_raster.set_yticks(range(len(FRAMEWORKS)))
-    ax_raster.set_yticklabels(FRAMEWORKS)
-    ax_raster.set_ylim(-0.6, len(FRAMEWORKS) - 0.4)
+    ax_raster.set_yticks(range(len(frameworks)))
+    ax_raster.set_yticklabels(frameworks)
+    ax_raster.set_ylim(-0.6, len(frameworks) - 0.4)
     ax_raster.set_xlabel("timestep")
     ax_raster.set_ylabel("spikes")
     ax_raster.grid(alpha=0.3, axis="x")
 
     spike_counts = "  ".join(
-        f"{name}={result['per_framework'][name]['total_spikes']}" for name in FRAMEWORKS
+        f"{name}={result['per_framework'][name]['total_spikes']}" for name in frameworks
     )
     figure.suptitle(
         f"LIF membrane traces  |  {test_name}  |  {run_timestamp}\n"
@@ -607,8 +756,22 @@ def main() -> int:
         config=config,
         output_dir=banner_output_dir,
     ))
-    versions = framework_versions()
+    frameworks, skipped = available_frameworks()
+    if len(frameworks) < 2:
+        raise ConfigError(
+            f"only {frameworks} could be imported, so there is nothing to compare. "
+            f"Skipped: {skipped}"
+        )
+
+    versions = framework_versions(frameworks)
     print("versions:", ", ".join(f"{k} {v}" for k, v in versions.items()))
+    print(f"comparing: {', '.join(frameworks)}  ({len(frameworks)} of {len(ALL_FRAMEWORKS)})")
+    if skipped:
+        print()
+        for name, reason in sorted(skipped.items()):
+            print(f"  SKIPPED {name}: not importable here -- {reason}")
+        print("  These are ABSENT from the results below, which is not the same as")
+        print("  agreeing with them. Install them to include them.")
     print(f"config:   {Path(args.config).resolve()}")
 
     device = require_str(config, "equivalence.device")
@@ -629,12 +792,10 @@ def main() -> int:
         raise ConfigError("equivalence.inputs must be a non-empty list")
 
     # Threshold is per-framework in the config; the plot needs one number to
-    # draw a line at. They are supposed to be equal, so take snnTorch's and say
-    # so loudly if the three disagree.
+    # draw a line at. They are supposed to be equal, so take the first framework's
+    # and say so loudly if they disagree.
     thresholds = {
-        "snntorch": require_float(neuron_cfg, "snntorch.threshold"),
-        "spikingjelly": require_float(neuron_cfg, "spikingjelly.v_threshold"),
-        "norse": require_float(neuron_cfg, "norse.v_th"),
+        name: require_float(neuron_cfg, THRESHOLD_KEY[name]) for name in frameworks
     }
     if len(set(thresholds.values())) != 1:
         print(f"\nWARNING: thresholds differ between frameworks: {thresholds}")
@@ -651,36 +812,46 @@ def main() -> int:
         "config_path": str(args.config),
         "neuron": neuron_cfg,
         "plot_membrane": membrane_view,
+        # Recorded explicitly. Without these two keys, a summary listing three
+        # frameworks is indistinguishable later from a four-way run, and "sinabs
+        # was never measured" would read as "sinabs agreed".
+        "frameworks_compared": frameworks,
+        "frameworks_skipped": skipped,
         "tests": {},
     }
     worst_overall = 0.0
 
     # No gradients needed: this compares forward dynamics only.
     with torch.no_grad():
-        boundary = probe_threshold_boundary(neuron_cfg, thresholds)
-        print_threshold_boundary(boundary, thresholds)
+        boundary = probe_threshold_boundary(neuron_cfg, thresholds, frameworks)
+        print_threshold_boundary(boundary, thresholds, frameworks)
         summary["threshold_boundary_fires_at_exactly_threshold"] = boundary
 
         for spec in input_specs:
             test_name = spec["name"]
             current = make_input(spec, steps)
 
-            traces = {name: RUNNERS[name](neuron_cfg, current) for name in FRAMEWORKS}
-            result = compare(traces)
+            traces = {name: RUNNERS[name](neuron_cfg, current) for name in frameworks}
+            result = compare(traces, frameworks)
 
-            print_report(test_name, result, tolerance)
+            print_report(test_name, result, tolerance, frameworks)
             # The divergence table is printed whenever there is something to see.
             # This is a display decision, not a verdict: with traces agreeing to
             # float32 epsilon the table would be nine identical columns.
             if result["worst_max_v_deviation"] > tolerance["max_v_deviation"]:
-                print_divergence(current, traces, tolerance["max_v_deviation"])
+                print_divergence(
+                    current, traces, tolerance["max_v_deviation"], frameworks
+                )
 
             plot_path = output_dir / f"equivalence_{test_name}_{run_timestamp}.png"
             save_plot(
-                test_name, current, traces, thresholds["snntorch"], result, plot_path,
-                caption=metadata_lines(neuron_cfg, spec, steps, current),
+                test_name, current, traces, thresholds[frameworks[0]], result, plot_path,
+                caption=metadata_lines(
+                    neuron_cfg, spec, steps, current, frameworks, skipped
+                ),
                 run_timestamp=run_timestamp,
                 membrane_view=membrane_view,
+                frameworks=frameworks,
             )
             print(f"  plot:   {plot_path}")
 

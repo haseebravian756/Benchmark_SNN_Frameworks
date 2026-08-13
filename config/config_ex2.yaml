@@ -45,6 +45,34 @@ extends: default.yaml
 # ---------------------------------------------------------------------------
 neuron:
 
+  # ⚠⚠ SINABS IS DELIBERATELY NOT OVERRIDDEN HERE, AND THAT MAKES IT UNSAFE TO
+  # RUN EX2 WITH --framework sinabs. READ THIS BEFORE DOING SO.
+  #
+  # `extends: default.yaml` means this file INHERITS default.yaml's sinabs block,
+  # and that block holds ex1's FORCED values -- the exact opposite of sinabs' own
+  # defaults in all three places that matter:
+  #
+  #     setting            inherited here    sinabs' actual (D) default
+  #     norm_input         false             true
+  #     spike_fn           single            multi   (MultiSpike)
+  #     reset_mechanism    zero (hard)       subtract (soft, MembraneSubtract)
+  #
+  # So a `--framework sinabs` run against THIS config would compare three
+  # frameworks at their out-of-the-box defaults against a sinabs that has been
+  # forced into ex1's neuron -- and would report it as out-of-the-box. Nothing in
+  # the code can detect that; the values are all individually valid.
+  #
+  # WHY IT IS NOT SIMPLY FILLED IN: `tau_mem` HAS NO CONSTRUCTOR DEFAULT. Like
+  # snnTorch's `beta`, it is a required argument, so kind (D) does not exist for
+  # it and there is no out-of-the-box time constant to write. Supplying one means
+  # finding the (E) value from sinabs' own event-data example, which has not been
+  # looked up yet -- see the open items in experiments/ex1/ex1_design.md.
+  #
+  # UNTIL THEN: ex2 is a THREE-framework experiment. Run it with snntorch,
+  # spikingjelly and norse only. equivalence_check.py will still include sinabs
+  # (it compares whatever imports), so treat any sinabs row in an ex2 equivalence
+  # figure as ex1's neuron sitting in an ex2 plot, not as an ex2 result.
+
   snntorch:
     # snn.Leaky update (docs):  U[t+1] = beta*U[t] + I_in[t+1] - R*U_thr
     # so d = beta, and g = 1 -- the input enters at FULL strength, decoupled from
