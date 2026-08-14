@@ -23,7 +23,7 @@ from pathlib import Path
 
 from src.config import run_banner
 
-CSV_FILES = ["runs.csv", "epochs.csv", "layers.csv"]
+CSV_FILES = ["runs.csv", "epochs.csv", "layers.csv", "gradients.csv"]
 
 
 def read_rows(path: Path) -> tuple[list[str], list[dict[str, str]]]:
@@ -40,6 +40,11 @@ def row_key(row: dict[str, str], filename: str) -> tuple:
         return (row.get("run_id", ""),)
     if filename == "epochs.csv":
         return (row.get("run_id", ""), row.get("epoch", ""))
+    if filename == "gradients.csv":
+        # One row per parameter tensor per epoch, so the epoch alone does not
+        # identify a row -- the parameter name has to be part of the key.
+        return (row.get("run_id", ""), row.get("epoch", ""),
+                row.get("param_name", ""))
     return (row.get("run_id", ""), row.get("layer_index", ""))
 
 

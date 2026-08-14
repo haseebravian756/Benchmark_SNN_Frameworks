@@ -5,6 +5,26 @@ all three and changing only the framework.
 
 Run 2026-08-01 → 2026-08-02 · Tesla T4 · **seeds 0, 1, 2 — 9 runs** · 5 epochs
 
+> ⚠️ **TWO FRAMEWORK BUGS were found during this project.** Both are defects in
+> released, current framework versions — not in our code. Recorded here because they
+> bear on how this report's numbers should be read:
+>
+> 1. **Norse 1.1.0's SuperSpike ignores its `alpha`** (finding 2 in §"what we found").
+>    ex1 avoided it by using `circ(0.5)`, but the measured consequence is in this
+>    report: effective α = 1 gave Norse a conv1 gradient norm **6.03×** the others'.
+>    → `local_docs/norse_superspike_alpha_finding.md`
+> 2. **SpikingJelly 0.0.0.0.14's fused CUDA kernel cannot run on any installable
+>    numpy** (`np.int`, removed in numpy 1.24, read on every kernel launch). This is
+>    part of *why* limitation **L2** below exists. With a runtime fix it does run, and
+>    **ex4 quantifies L2** — so treat L2 as measured rather than open.
+>    → `local_docs/spikingjelly_multistep_intro.md` §1.3 and
+>    `experiments/ex4/ex4_design.md`
+>
+> Both are summarised together at the top of
+> `local_docs/SNNs_Introduction_BaseConcepts.md`. That **two of the four compared
+> frameworks ship a broken released feature**, both failing silently rather than
+> loudly, is itself a result worth stating in the final report.
+
 ---
 
 ## 1. Summary

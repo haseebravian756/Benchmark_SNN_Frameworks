@@ -1,0 +1,241 @@
+{
+  "run_timestamp": "20260813_141324",
+  "versions": {
+    "torch": "2.11.0+cu128",
+    "snntorch": "1.0.0",
+    "spikingjelly": "0.0.0.0.14",
+    "norse": "1.1.0",
+    "sinabs": "3.1.3"
+  },
+  "config_path": "config/config_ex2.yaml",
+  "neuron": {
+    "snntorch": {
+      "beta": 0.5,
+      "threshold": 1.0,
+      "reset_mechanism": "subtract",
+      "reset_delay": true,
+      "surrogate": {
+        "type": "atan",
+        "alpha": 2.0
+      }
+    },
+    "spikingjelly": {
+      "tau": 2.0,
+      "decay_input": true,
+      "v_threshold": 1.0,
+      "v_reset": 0.0,
+      "detach_reset": true,
+      "step_mode": "s",
+      "backend": "torch",
+      "surrogate": {
+        "type": "atan",
+        "alpha": 2.0
+      }
+    },
+    "norse": {
+      "dt": 0.001,
+      "tau_mem_inv": 100.0,
+      "v_th": 1.0,
+      "v_reset": 0.0,
+      "v_leak": 0.0,
+      "reset_method": "value",
+      "input_scale": 1.0,
+      "surrogate": {
+        "type": "super",
+        "alpha": 100.0
+      }
+    },
+    "sinabs": {
+      "tau_mem": Infinity,
+      "tau_syn": null,
+      "norm_input": false,
+      "spike_threshold": 1.0,
+      "spike_fn": "multi",
+      "reset_mechanism": "subtract",
+      "v_reset": 0.0,
+      "min_v_mem": -1.0,
+      "train_alphas": false,
+      "record_states": false,
+      "surrogate": {
+        "type": "periodic_exponential",
+        "grad_width": 0.5,
+        "grad_scale": 1.0
+      }
+    }
+  },
+  "plot_membrane": "pre_reset",
+  "frameworks_compared": [
+    "snntorch",
+    "spikingjelly",
+    "norse",
+    "sinabs"
+  ],
+  "frameworks_skipped": {},
+  "tests": {
+    "constant_step": {
+      "input": {
+        "name": "constant_step",
+        "onset": 10,
+        "amplitude": 0.15
+      },
+      "per_framework": {
+        "snntorch": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.30000001192092896
+        },
+        "spikingjelly": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.15000000596046448
+        },
+        "norse": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.1499885618686676
+        },
+        "sinabs": {
+          "total_spikes": 13,
+          "first_spike_step": 16,
+          "peak_v_pre": 1.1499996185302734
+        }
+      },
+      "pairs": [
+        {
+          "a": "snntorch",
+          "b": "spikingjelly",
+          "max_v_pre_deviation": 0.15000000596046448,
+          "max_v_post_deviation": 0.15000000596046448,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "norse",
+          "max_v_pre_deviation": 0.22966499626636505,
+          "max_v_post_deviation": 0.22966499626636505,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "sinabs",
+          "max_v_pre_deviation": 0.8499997854232788,
+          "max_v_post_deviation": 0.6999998092651367,
+          "spike_time_match": 0.8700000047683716
+        },
+        {
+          "a": "spikingjelly",
+          "b": "norse",
+          "max_v_pre_deviation": 0.09060000628232956,
+          "max_v_post_deviation": 0.09060000628232956,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "spikingjelly",
+          "b": "sinabs",
+          "max_v_pre_deviation": 0.9999997019767761,
+          "max_v_post_deviation": 0.8499996662139893,
+          "spike_time_match": 0.8700000047683716
+        },
+        {
+          "a": "norse",
+          "b": "sinabs",
+          "max_v_pre_deviation": 1.0164124965667725,
+          "max_v_post_deviation": 0.8682360053062439,
+          "spike_time_match": 0.8700000047683716
+        }
+      ],
+      "worst_max_v_deviation": 1.0164124965667725,
+      "worst_spike_time_match": 0.8700000047683716
+    },
+    "poisson": {
+      "input": {
+        "name": "poisson",
+        "rate": 0.15,
+        "amplitude": 0.6,
+        "seed": 0
+      },
+      "per_framework": {
+        "snntorch": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.9011764526367188
+        },
+        "spikingjelly": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.4505882263183594
+        },
+        "norse": {
+          "total_spikes": 0,
+          "first_spike_step": null,
+          "peak_v_pre": 0.1572313904762268
+        },
+        "sinabs": {
+          "total_spikes": 8,
+          "first_spike_step": 3,
+          "peak_v_pre": 1.4000003337860107
+        }
+      },
+      "pairs": [
+        {
+          "a": "snntorch",
+          "b": "spikingjelly",
+          "max_v_pre_deviation": 0.4505882263183594,
+          "max_v_post_deviation": 0.4505882263183594,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "norse",
+          "max_v_pre_deviation": 0.7860000133514404,
+          "max_v_post_deviation": 0.7860000133514404,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "snntorch",
+          "b": "sinabs",
+          "max_v_pre_deviation": 0.7999817132949829,
+          "max_v_post_deviation": 0.7999633550643921,
+          "spike_time_match": 0.9200000166893005
+        },
+        {
+          "a": "spikingjelly",
+          "b": "norse",
+          "max_v_pre_deviation": 0.3360000252723694,
+          "max_v_post_deviation": 0.3360000252723694,
+          "spike_time_match": 1.0
+        },
+        {
+          "a": "spikingjelly",
+          "b": "sinabs",
+          "max_v_pre_deviation": 1.0999908447265625,
+          "max_v_post_deviation": 0.7999817132949829,
+          "spike_time_match": 0.9200000166893005
+        },
+        {
+          "a": "norse",
+          "b": "sinabs",
+          "max_v_pre_deviation": 1.3185532093048096,
+          "max_v_post_deviation": 0.7761702537536621,
+          "spike_time_match": 0.9200000166893005
+        }
+      ],
+      "worst_max_v_deviation": 1.3185532093048096,
+      "worst_spike_time_match": 0.9200000166893005
+    }
+  },
+  "threshold_boundary_fires_at_exactly_threshold": {
+    "snntorch": false,
+    "spikingjelly": false,
+    "norse": false,
+    "sinabs": true
+  },
+  "threshold_boundary_v_reached": {
+    "snntorch": 1.0,
+    "spikingjelly": 0.5,
+    "norse": 0.10000000149011612,
+    "sinabs": 1.0
+  },
+  "worst_max_v_deviation": 1.3185532093048096,
+  "reference_max_v_deviation": 0.0001
+}

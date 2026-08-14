@@ -15,8 +15,9 @@ boundaries rather than per batch.
     # force CPU (the laptop has no CUDA build of torch)
     python train.py --config config/default.yaml --device cpu --max-batches 3
 
-Writes results/runs.csv, results/epochs.csv, results/layers.csv and
-results/runs/<run_id>.json. All are append-only with a fixed schema.
+Writes results/runs.csv, results/epochs.csv, results/layers.csv,
+results/gradients.csv and results/runs/<run_id>.json. All are append-only with a
+fixed schema.
 """
 
 from __future__ import annotations
@@ -51,6 +52,7 @@ from src.metrics import (
     detect_update_interval_ms,
     dynamic_energy_j,
     energy_warnings,
+    gradient_probe,
     integrate_energy_j,
     measure_idle_power,
     measure_latency,
@@ -125,7 +127,7 @@ def weight_fingerprint(net) -> str:
     return digest.hexdigest()[:16]
 
 
-def warm_up(net, loader, device, loss_fn, iterations: int) -> None:
+def warm_up(net, loader, device, loss_fn, iterations: int):
     """Compile the CUDA kernels and start the DataLoader workers.
 
     Forward AND backward, because backward kernels need compiling too -- but no
@@ -133,15 +135,88 @@ def warm_up(net, loader, device, loss_fn, iterations: int) -> None:
     exactly where they would have without this. Gradients are cleared after.
 
     The same first batch is reused rather than consuming the epoch's batches.
+
+    Returns that batch, still on the CPU, for the gradient probe to reuse --
+    None when there is no warm-up. REUSE, not a fresh batch, and not for tidiness:
+    `loader` shuffles from its own seeded generator, so every extra `iter(loader)`
+    would draw another permutation and shift the batch order of every later epoch.
+    That would change the run, which is exactly what a measurement must not do.
     """
     if iterations <= 0:
-        return
+        return None
     net.train()
     frames, labels = next(iter(loader))
-    frames, labels = frames.to(device), labels.to(device)
+    device_frames, device_labels = frames.to(device), labels.to(device)
     for _ in range(iterations):
-        loss_fn(net(frames), labels).backward()
+        loss_fn(net(device_frames), device_labels).backward()
     net.zero_grad(set_to_none=True)
+    # The CPU copies, deliberately: keeping a batch resident on the GPU for the
+    # whole run would raise peak_memory_train_mb by its own size (~24 MB here).
+    return frames, labels
+
+
+def probe_gradients(
+    net, probe_batch, device, loss_fn, epoch: int, rows: list[dict[str, Any]]
+) -> dict[str, Any] | None:
+    """Measure gradient magnitude at this point in training and record it.
+
+    Returns None when there is no fixed batch to probe with, so every caller
+    degrades to "no gradient numbers" rather than to a crash.
+
+    `epoch` 0 means before any training: at that point every framework holds
+    byte-identical weights, so a difference in the numbers is the neuron and its
+    surrogate and nothing else -- the cleanest gradient-scale comparison there is.
+    """
+    if probe_batch is None:
+        return None
+    frames, labels = probe_batch
+    result = gradient_probe(net, frames, labels, device, loss_fn)
+    rows.extend(
+        {
+            "epoch": epoch,
+            "probe_seconds": result["probe_seconds"],
+            "probe_loss": result["probe_loss"],
+            "grad_norm_global": result["grad_norm_global"],
+            **parameter,
+        }
+        for parameter in result["params"]
+    )
+    return result
+
+
+def gradient_line(result: dict[str, Any]) -> str:
+    return (f"||g|| {result['grad_norm_global']:.4g}   "
+            f"probe loss {result['probe_loss']:.4f}   "
+            f"({result['probe_seconds']:.2f}s, untimed)")
+
+
+def print_gradient_table(rows: list[dict[str, Any]]) -> None:
+    """Parameters down the side, epochs across the top.
+
+    That way round because a run has more epochs than parameter tensors, and a
+    table wider than the terminal is a table nobody reads.
+    """
+    if not rows:
+        return
+    epochs = sorted({row["epoch"] for row in rows})
+    # dict.fromkeys keeps the order the parameters appear in the network.
+    names = list(dict.fromkeys(row["param_name"] for row in rows))
+    norm = {(row["epoch"], row["param_name"]): row["grad_norm"] for row in rows}
+    overall = {row["epoch"]: row["grad_norm_global"] for row in rows}
+    losses = {row["epoch"]: row["probe_loss"] for row in rows}
+
+    label_width = max(len(name) for name in names + ["global ||g||"]) + 2
+    print(f"  {'parameter':<{label_width}}"
+          + "".join(f"{'e' + str(epoch):>11}" for epoch in epochs))
+    for name in names:
+        print(f"  {name:<{label_width}}" + "".join(
+            f"{norm.get((epoch, name), float('nan')):>11.4g}" for epoch in epochs))
+    print(f"  {'global ||g||':<{label_width}}"
+          + "".join(f"{overall.get(epoch, float('nan')):>11.4g}" for epoch in epochs))
+    print(f"  {'probe loss':<{label_width}}"
+          + "".join(f"{losses.get(epoch, float('nan')):>11.4f}" for epoch in epochs))
+    print("  e0 is before any training, so all frameworks are at identical weights")
+    print("  there; a difference at e0 is the surrogate gradient, nothing else.")
 
 
 def run_pass(
@@ -316,9 +391,29 @@ def main() -> int:
     print(f"\n[2] warm-up x{require_int(metrics_cfg, 'warmup_iterations')} "
           f"(no optimizer step)")
     before = weight_fingerprint(net)
-    warm_up(net, train_loader, device, loss_fn,
-            require_int(metrics_cfg, "warmup_iterations"))
+    probe_batch = warm_up(net, train_loader, device, loss_fn,
+                          require_int(metrics_cfg, "warmup_iterations"))
     print(f"  weights unchanged: {before == weight_fingerprint(net)}")
+
+    # ---- region 2b: gradient probe at epoch 0 ------------------------------
+    # Untimed, no optimizer step, and BEFORE the power sampler starts, so this
+    # first probe costs the measured run nothing whatsoever.
+    gradient_rows: list[dict[str, Any]] = []
+    probe_seconds_total = 0.0
+    # Tracked apart from the total because the epoch-0 probe just below happens
+    # outside the energy span, and only what is INSIDE it can distort energy.
+    probe_seconds_in_span = 0.0
+    if probe_batch is None:
+        print("  warmup_iterations is 0, so there is no fixed batch -- "
+              "gradient probe disabled for this run")
+    else:
+        print("\n[2b] gradient probe, before training")
+        before = weight_fingerprint(net)
+        initial_grads = probe_gradients(net, probe_batch, device, loss_fn, 0,
+                                        gradient_rows)
+        probe_seconds_total += initial_grads["probe_seconds"]
+        print(f"  {gradient_line(initial_grads)}")
+        print(f"  weights unchanged: {before == weight_fingerprint(net)}")
 
     # ---- region 3: training ------------------------------------------------
     print("\n[3] training")
@@ -346,10 +441,25 @@ def main() -> int:
                                  args.max_eval_batches, "eval", report_every=10**9)
             epoch_activity = spike_rates(net)
 
+        # Deliberately OUTSIDE the block above: the probe's own spikes must not
+        # land in this epoch's spike rate, and it needs gradients, which
+        # `torch.no_grad()` would have switched off.
+        #
+        # One extra batch against an epoch's ~469 is ~0.2% -- small enough to sit
+        # inside the energy span rather than distort the trace by sitting outside
+        # it, and its cost is totalled and printed below instead of assumed.
+        epoch_grads = probe_gradients(net, probe_batch, device, loss_fn, epoch,
+                                      gradient_rows)
+        if epoch_grads is not None:
+            probe_seconds_total += epoch_grads["probe_seconds"]
+            probe_seconds_in_span += epoch_grads["probe_seconds"]
+
         print(f"    train loss {last_train['loss']:.4f} acc {last_train['accuracy_pct']:.1f}%"
               f"   test loss {last_test['loss']:.4f} acc {last_test['accuracy_pct']:.1f}%"
               f"   spikes {epoch_activity['spike_rate_pct']:.2f}%"
               f"   ({epoch_timer['seconds']:.1f}s train)")
+        if epoch_grads is not None:
+            print(f"    gradient   {gradient_line(epoch_grads)}")
 
         epoch_rows.append({
             "epoch": epoch,
@@ -490,13 +600,29 @@ def main() -> int:
             "idle_power_cold": idle_cold,
             "idle_power_after_train": idle_hot,
             "energy_warnings": warnings,
+            "gradients": gradient_rows,
+            "gradient_probe_seconds_total": probe_seconds_total,
+            "gradient_probe_seconds_in_energy_span": probe_seconds_in_span,
         },
         flat=flat,
+        gradient_rows=gradient_rows,
     )
 
     print("\n[7] results written")
     for name, path in paths.items():
         print(f"  {name:<7} {path}")
+
+    if gradient_rows:
+        # Printed after the writing, on purpose: nothing about presenting a table
+        # may be able to lose a finished run's results.
+        print("\ngradient behaviour -- ||g|| on ONE fixed batch, untimed, "
+              "no optimizer step")
+        print_gradient_table(gradient_rows)
+        share = (100.0 * probe_seconds_in_span / energy_span_s
+                 if energy_span_s else 0.0)
+        print(f"  probe cost {probe_seconds_total:.1f}s in total, of which "
+              f"{probe_seconds_in_span:.1f}s fell inside the "
+              f"{energy_span_s:.0f}s energy span ({share:.2f}% of it)")
 
     if warnings:
         print(f"\n  {len(warnings)} ENERGY WARNING(S) -- recorded in the CSV:")
@@ -514,6 +640,10 @@ def main() -> int:
         print(f"energy   {total_energy_j:.1f} J total   "
               f"{dynamic_j:.1f} J dynamic   "
               f"(idle {idle_hot['mean_w']:.1f} W over {energy_span_s:.0f}s)")
+    if gradient_rows:
+        print(f"gradient ||g|| {gradient_rows[0]['grad_norm_global']:.4g} "
+              f"before training -> "
+              f"{gradient_rows[-1]['grad_norm_global']:.4g} after")
     print("=" * 70)
     return 0
 

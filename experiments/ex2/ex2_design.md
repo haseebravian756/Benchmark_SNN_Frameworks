@@ -4,6 +4,23 @@
 `config/config_ex2.yaml` is written and validated; the evidence figure in §2.3 is
 already generated. Nothing else exists yet.
 
+> ⚠️ **FRAMEWORK BUG affecting this experiment's Norse arm.** Norse 1.1.0's SuperSpike
+> surrogate **accepts `alpha` and never reads it** — α = 1, 10 and 100 give
+> byte-identical gradients, and it always behaves as α = 1. Fixed upstream (commit
+> `1d2671a`, Aug 2024) but **never released**.
+>
+> ex2 deliberately does **not** work around this, because a user following Norse's
+> defaults gets the buggy surrogate — so it is the honest out-of-the-box condition and
+> becomes a *measured result* rather than a footnote. But it is a confound in any
+> accuracy comparison: measured in ex1, the effective α = 1 gave Norse a conv1
+> gradient norm **6.03×** the others', i.e. at a shared learning rate Norse trains at
+> roughly 6× the step size. Discussed in §2.3; full write-up in
+> `local_docs/norse_superspike_alpha_finding.md`.
+>
+> This is **one of two** framework bugs this project found; both are summarised at the
+> top of `local_docs/SNNs_Introduction_BaseConcepts.md`. The other one does not affect
+> ex2 (it is on SpikingJelly's cupy path, which ex2 does not use — see ex4).
+
 Experiment 1 forced all three frameworks to compute *one* neuron, so that only the
 implementation could differ. Experiment 2 asks the opposite question:
 

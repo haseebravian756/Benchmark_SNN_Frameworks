@@ -7,6 +7,21 @@
 > number; ex4 turns the kernel on, confirms the answers do not change, and measures
 > what the speed actually is.
 
+> ⚠️ **FRAMEWORK BUG that blocks this experiment entirely without a fix.**
+> SpikingJelly 0.0.0.0.14 reads `np.int` at `auto_cuda/base.py:249` — an alias numpy
+> removed in 1.24 — on **every CUDA kernel launch**. Its advertised fast path
+> therefore raises `AttributeError` and never runs. **No installable numpy fixes this**
+> (Colab is Python 3.12, earliest numpy 1.26). We correct it at runtime in
+> `src/multistep/sj_numpy_compat.py`; the patch touches a validation assert, and the
+> proof it changed no arithmetic is that spikes come out bit-identical. **This must be
+> declared as a limitation in any report using ex4's numbers** — see §5.2.
+>
+> One of **two** framework bugs found in this project; the other is Norse 1.1.0's
+> SuperSpike ignoring its `alpha`. Both are summarised together at the top of
+> `local_docs/SNNs_Introduction_BaseConcepts.md`, and the fact that **two of four
+> frameworks ship a broken released feature, both failing silently**, is itself a
+> reportable result about ecosystem maturity.
+
 This is open item **E5**, and it closes limitation **L2** which is declared in both
 the ex1 and the ex2 reports.
 

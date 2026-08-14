@@ -601,6 +601,7 @@ experiments/ex1/          <- created by --experiment ex1
     runs.csv              one row per (framework, seed)
     epochs.csv            one row per epoch
     layers.csv            one row per LIF layer
+    gradients.csv         one row per (epoch, parameter tensor) -- gradient norms
     runs/*.json           full config snapshot per run
 
 local_runs/               <- no --experiment: flat, timestamped, gitignored

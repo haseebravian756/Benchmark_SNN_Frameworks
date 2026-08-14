@@ -1,4 +1,4 @@
-"""Writing results: three CSVs plus one JSON per run.
+"""Writing results: up to four CSVs plus one JSON per run.
 
 The schema is FIXED and defined here, once. That is the whole point of this
 module: runs come from different configs (`default.yaml`, `norse_super.yaml`,
@@ -85,6 +85,22 @@ EPOCH_COLUMNS: list[str] = [
 LAYER_COLUMNS: list[str] = [
     "schema_version", "run_id", "layer_index", "layer_type",
     "neurons", "total_spikes", "opportunities", "spike_rate_pct",
+]
+
+# A FOURTH table, added after ex1, ex2 and ex4 had already written the three
+# above. Its own file, deliberately: guarantee 3 means `append_row` REFUSES a
+# file whose header changed, so putting `grad_norm_global` into epochs.csv would
+# lock every existing results folder until its old CSVs were moved aside. A new
+# file collides with nothing. SCHEMA_VERSION therefore stays at 1 -- the three
+# original tables are byte-for-byte what they were.
+#
+# One row per (epoch, parameter tensor). The three per-epoch values are repeated
+# on each of that epoch's rows. Redundant, and worth it: it keeps this one flat
+# table, with no special "total" row that every group-by has to filter out.
+GRADIENT_COLUMNS: list[str] = [
+    "schema_version", "run_id", "epoch",
+    "probe_seconds", "probe_loss", "grad_norm_global",
+    "param_name", "param_count", "grad_norm", "grad_rms", "grad_max_abs",
 ]
 
 
@@ -232,15 +248,24 @@ def write_results(
     layer_rows: list[dict[str, Any]],
     json_payload: dict[str, Any],
     flat: bool = False,
+    gradient_rows: list[dict[str, Any]] | None = None,
 ) -> dict[str, Path]:
-    """Write all four artefacts for one run."""
+    """Write every artefact for one run.
+
+    `gradient_rows` comes last and defaults to None so that a caller written
+    before gradients.csv existed keeps working unchanged.
+    """
     results_dir = Path(results_dir)
     run_id = run_row["run_id"]
+    gradient_rows = gradient_rows or []
 
     for row in epoch_rows:
         row.setdefault("run_id", run_id)
         row.setdefault("schema_version", SCHEMA_VERSION)
     for row in layer_rows:
+        row.setdefault("run_id", run_id)
+        row.setdefault("schema_version", SCHEMA_VERSION)
+    for row in gradient_rows:
         row.setdefault("run_id", run_id)
         row.setdefault("schema_version", SCHEMA_VERSION)
     run_row.setdefault("schema_version", SCHEMA_VERSION)
@@ -255,6 +280,13 @@ def write_results(
         append_row(paths["epochs"], EPOCH_COLUMNS, row)
     for row in layer_rows:
         append_row(paths["layers"], LAYER_COLUMNS, row)
+
+    # Only created when there is something to put in it, so a run whose gradient
+    # probe was skipped leaves no empty file behind to puzzle over later.
+    if gradient_rows:
+        paths["grads"] = results_dir / "gradients.csv"
+        for row in gradient_rows:
+            append_row(paths["grads"], GRADIENT_COLUMNS, row)
 
     paths["json"] = write_run_json(results_dir, run_id, json_payload, flat)
     return paths

@@ -36,6 +36,7 @@ Add to it as things come up. Move an item out when it is done or abandoned.
 | M6 | External power-meter validation of the NVML energy numbers — literature reports NVML error up to 73% vs a physical meter | unlikely to be feasible; note as a limitation |
 | M7 | Spike rate DURING training (currently measured on inference only). Would be a moving target since weights change every batch, and would need its own untimed pass. Different question: "how active is the network while learning?" vs "how active is the deployed network?" | not started |
 | M8 | Report `runs.csv` energy in kJ/Wh as well as J — a 5-epoch run is ~20 kJ, which reads awkwardly in joules | trivial, analysis-time |
+| M9 | **Gradient norm per epoch** — ex1 measured Norse's 6.03× conv1 gradient norm with a throwaway script; it is now a standing measurement. `gradient_probe()` in `src/metrics.py`, one fixed batch (the warm-up batch, reused so no extra permutation is drawn from the shuffler), forward+backward with NO optimizer step, at epoch 0 and after every epoch. Writes a **new** `gradients.csv` rather than new columns in `epochs.csv`, because `append_row` refuses a changed header and that would have locked every existing results folder. Epoch 0 is the useful one for cross-framework work: identical weights everywhere, so any difference there is the surrogate gradient alone. Verified against the pre-change code — byte-identical losses, accuracies and spike rates | **DONE** |
 
 ## Engineering
 

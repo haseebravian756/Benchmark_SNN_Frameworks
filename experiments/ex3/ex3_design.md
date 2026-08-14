@@ -4,6 +4,17 @@
 No config file exists, no code has been changed, no data has been downloaded. This
 document is the argument for the experiment, not a report on it.
 
+> ⚠️ **FRAMEWORK BUG relevant to this design.** Norse 1.1.0's SuperSpike surrogate
+> **accepts `alpha` and never reads it** — α = 1, 10 and 100 give byte-identical
+> gradients, and it always behaves as α = 1. Fixed upstream (commit `1d2671a`, Aug
+> 2024) but **never released**. This is the reason §6 forces `circ(0.5)` here rather
+> than using `super`; see T22 in the sources and
+> `local_docs/norse_superspike_alpha_finding.md`.
+>
+> One of **two** framework bugs found in this project — both summarised at the top of
+> `local_docs/SNNs_Introduction_BaseConcepts.md`. If ex3 ever runs SpikingJelly with
+> `backend: cupy`, the second one applies too (see `experiments/ex4/ex4_design.md`).
+
 Experiments 1 and 2 both asked about **one neuron** — first forced to agree (ex1),
 then allowed to differ by each framework's own defaults (ex2). Both ran on N-MNIST.
 Experiment 3 changes both halves of that at once, on purpose:

@@ -16,6 +16,7 @@ Three rules baked in, each of which would silently corrupt results if broken:
 
 from __future__ import annotations
 
+import math
 import statistics
 import threading
 import time
@@ -160,6 +161,103 @@ def spike_rates(net) -> dict[str, Any]:
         "total_spikes": total_spikes,
         "total_opportunities": total_slots,
     }
+
+
+# ---------------------------------------------------------------------------
+# Gradient magnitude
+#
+# Why this is measured at all: with ONE shared learning rate, a framework whose
+# surrogate gradient is systematically larger takes systematically larger steps,
+# so it is not being compared at the same effective learning rate as the others.
+# Experiment 1 hit exactly this -- Norse's released SuperSpike ignores its alpha
+# and produced a 6.03x conv1 gradient norm. That was measured by a throwaway
+# script; this makes it a standing column of every run instead.
+# ---------------------------------------------------------------------------
+
+
+def gradient_norms(net) -> dict[str, Any]:
+    """Read whatever gradients are currently sitting on the trainable parameters.
+
+    Reads only. Nothing is zeroed here, so the caller stays in charge of when
+    the gradients cease to exist.
+
+    Three numbers per parameter tensor, because one is not enough:
+
+      grad_norm     L2 norm ||g||. Grows with the element count, so it compares
+                    honestly across runs for the SAME tensor and dishonestly
+                    between tensors of different sizes.
+      grad_rms      ||g|| / sqrt(n) -- per-element magnitude. THIS is the one to
+                    compare conv1 against fc, or one framework against another.
+      grad_max_abs  the largest single element, which is what actually explodes.
+
+    `grad_norm_global` is sqrt(sum of squares over all trainable parameters) --
+    exactly the quantity `clip_grad_norm_` would clip on, and deliberately not
+    the mean of the per-tensor norms.
+    """
+    per_param: list[dict[str, Any]] = []
+    total_square = 0.0
+
+    for name, tensor in net.named_parameters():
+        if not tensor.requires_grad or tensor.grad is None:
+            continue
+        grad = tensor.grad.detach()
+        count = grad.numel()
+        norm = grad.norm(2).item()
+        total_square += norm * norm
+        per_param.append(
+            {
+                "param_name": name,
+                "param_count": count,
+                "grad_norm": norm,
+                "grad_rms": norm / math.sqrt(count) if count else 0.0,
+                "grad_max_abs": grad.abs().max().item(),
+            }
+        )
+
+    return {
+        "params": per_param,
+        "grad_norm_global": math.sqrt(total_square) if per_param else None,
+    }
+
+
+def gradient_probe(net, frames, labels, device, loss_fn) -> dict[str, Any]:
+    """Gradient magnitudes on ONE fixed batch, leaving the run untouched.
+
+    Forward and backward, and NO optimizer step -- so the weights, and with them
+    the training trajectory, are exactly what they would have been without this
+    call. Gradients are cleared before and after, so nothing leaks into the next
+    training batch either.
+
+    `frames`/`labels` are meant to be the SAME batch on every call. Then a change
+    in these numbers between epochs is a change in the WEIGHTS, which is the
+    behaviour being tracked, rather than a change in which digits turned up.
+
+    The batch is expected on the CPU and copied here: holding a batch on the GPU
+    for the whole run would raise `peak_memory_train_mb` by its own size and
+    quietly change a reported metric.
+
+    Cost is one batch's forward+backward per call. Against ~469 training batches
+    per epoch that is ~0.2%, which is why it can sit inside the epoch loop -- but
+    it is timed and reported (`probe_seconds`) rather than assumed negligible.
+    """
+    was_training = net.training
+    net.train()
+    net.zero_grad(set_to_none=True)
+
+    synchronize(device)
+    start = time.perf_counter()
+    with torch.enable_grad():  # correct even if a caller wrapped us in no_grad
+        loss = loss_fn(net(frames.to(device)), labels.to(device))
+        loss.backward()
+    result = gradient_norms(net)
+    synchronize(device)
+    result["probe_seconds"] = time.perf_counter() - start
+    result["probe_loss"] = loss.item()
+
+    net.zero_grad(set_to_none=True)
+    if not was_training:
+        net.eval()
+    return result
 
 
 # ---------------------------------------------------------------------------
