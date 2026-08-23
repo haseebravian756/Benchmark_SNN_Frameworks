@@ -1,8 +1,11 @@
-# Denoising OFF -- an ablation against the ex1 baseline.
+# Experiment 5 -- denoising OFF. An ablation against the ex1 baseline.
 #
-#   .venv\Scripts\python prepare_data.py --config config/config_no_denoise.yaml
-#   python train.py --config config/config_no_denoise.yaml --experiment no_denoise \
+#   .venv\Scripts\python prepare_data.py --config config/config_no_denoise.yaml \
+#       --experiment ex5
+#   python train.py --config config/config_no_denoise.yaml --experiment ex5 \
 #       --framework <fw> --seed <s> --results-root <drive>
+#
+# Design, and what may and may not be claimed: experiments/ex5/ex5_design.md
 #
 # ---------------------------------------------------------------------------
 # WHAT THIS CHANGES
