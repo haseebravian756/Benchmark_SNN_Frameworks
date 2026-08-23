@@ -1,0 +1,29 @@
+# Denoising OFF -- an ablation against the ex1 baseline.
+#
+#   .venv\Scripts\python prepare_data.py --config config/config_no_denoise.yaml
+#   python train.py --config config/config_no_denoise.yaml --experiment no_denoise \
+#       --framework <fw> --seed <s> --results-root <drive>
+#
+# ---------------------------------------------------------------------------
+# WHAT THIS CHANGES
+#
+# Exactly one thing: raw events go straight into ToFrame with no spatio-temporal
+# filtering, so the isolated background-activity events an event camera emits
+# survive into the frames the network sees. Everything else -- framing, neuron,
+# architecture, optimiser, seeds, metrics -- is inherited from default.yaml.
+#
+# Denoise runs BEFORE framing and changes which events exist, so it is part of
+# the cache identity (src/data.py:189). This config therefore builds its OWN
+# cache directory, named `t20_dn0_<digest>`. The existing `t20_dn10000_7e3016`
+# cache is NOT touched or invalidated -- both can sit on disk at once, and you
+# can switch between them by switching config.
+#
+# COST: the new cache must be built from scratch before the first run.
+#
+# To ablate against ex2 (out-of-the-box neurons) instead of ex1, change the
+# `extends` line below to `config_ex2.yaml`.
+# ---------------------------------------------------------------------------
+extends: default.yaml
+
+dataset:
+  denoise_filter_time_us: null
